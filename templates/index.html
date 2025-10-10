@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FX AI PRO 🤖</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background: linear-gradient(135deg, #0a0a23, #1a1a3d);
+      color: white;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+    h1 { font-size: 2.2em; margin-bottom: 20px; color: #00ffff; }
+    button {
+      background-color: #00ffff;
+      border: none;
+      padding: 15px 30px;
+      border-radius: 10px;
+      font-size: 1.1em;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+    button:hover { background-color: #00b3b3; }
+    #result {
+      margin-top: 30px;
+      font-size: 1.3em;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <h1>FX AI PRO 🤖</h1>
+  <button onclick="obtenerSenal()">Obtener señal actual</button>
+  <div id="result">Esperando señal...</div>
+
+  <script>
+    async function obtenerSenal() {
+      const resultDiv = document.getElementById("result");
+      resultDiv.innerHTML = "⏳ Consultando señal...";
+      try {
+        const response = await fetch("/api/signal");
+        const data = await response.json();
+        if (data.error) {
+          resultDiv.innerHTML = "⚠️ Error al obtener datos: " + data.error;
+        } else {
+          resultDiv.innerHTML = `
+            <p><strong>Par:</strong> ${data.ticker}</p>
+            <p><strong>Probabilidad de subida:</strong> ${(data.p_up * 100).toFixed(2)}%</p>
+            <p><strong>Señal:</strong>
+              <span style="color:${
+                data.signal === 'LONG' ? 'lime' : data.signal === 'SHORT' ? 'red' : 'yellow'
+              }">
+                ${data.signal}
+              </span>
+            </p>
+          `;
+        }
+      } catch (err) {
+        resultDiv.innerHTML = "❌ Error de conexión con el servidor.";
+      }
+    }
+  </script>
+</body>
+</html>
+
