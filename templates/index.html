@@ -18,6 +18,7 @@
         #updateBtn { display: block; margin: 20px auto; padding: 10px 25px; font-size: 16px; cursor: pointer; background-color: #3498db; color: white; border: none; border-radius: 5px; }
         #updateBtn:hover { background-color: #2980b9; }
         #lastUpdate { text-align: center; margin-top: 10px; font-size: 14px; color: #555; }
+        #errorMsg { text-align: center; color: #c0392b; font-weight: bold; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -36,21 +37,26 @@
         </tbody>
     </table>
     <div id="lastUpdate"></div>
+    <div id="errorMsg"></div>
 
     <script>
-        const API_URL = "http://127.0.0.1:5000/api/signals";
+        const API_URL = "/api/signals";  // ruta relativa a Flask
         const REFRESH_INTERVAL = 30 * 1000; // 30 segundos
 
         async function fetchSignals() {
             const tableBody = document.getElementById("signalsTable");
+            const errorDiv = document.getElementById("errorMsg");
             tableBody.innerHTML = "<tr><td colspan='3'>Cargando...</td></tr>";
+            errorDiv.textContent = "";
 
             try {
                 const response = await fetch(API_URL);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
                 const data = await response.json();
 
-                if (!Array.isArray(data)) {
-                    tableBody.innerHTML = "<tr><td colspan='3'>Error en la respuesta del servidor</td></tr>";
+                if (!Array.isArray(data) || data.length === 0) {
+                    tableBody.innerHTML = "<tr><td colspan='3'>⚠️ No hay señales disponibles</td></tr>";
                     return;
                 }
 
@@ -58,17 +64,25 @@
                 data.forEach(item => {
                     const tr = document.createElement("tr");
 
-                    const tdSymbol = document.createElement("td");
-                    tdSymbol.textContent = item.symbol;
+                    // Color de fila según señal
+                    if ((item.signal || "").includes("Comprar")) tr.style.backgroundColor = "#e8f8f5";
+                    else if ((item.signal || "").includes("Vender")) tr.style.backgroundColor = "#fdecea";
+                    else tr.style.backgroundColor = "#f0f0f0";
 
+                    // Símbolo
+                    const tdSymbol = document.createElement("td");
+                    tdSymbol.textContent = item.symbol || "N/A";
+
+                    // Señal
                     const tdSignal = document.createElement("td");
-                    tdSignal.textContent = item.signal;
-                    if (item.signal.includes("Comprar")) tdSignal.className = "signal-buy";
-                    else if (item.signal.includes("Vender")) tdSignal.className = "signal-sell";
+                    tdSignal.textContent = item.signal || "N/A";
+                    if ((item.signal || "").includes("Comprar")) tdSignal.className = "signal-buy";
+                    else if ((item.signal || "").includes("Vender")) tdSignal.className = "signal-sell";
                     else tdSignal.className = "signal-hold";
 
+                    // Probabilidad
                     const tdProb = document.createElement("td");
-                    const probValue = item.prob_up !== undefined ? item.prob_up : item.prob;
+                    const probValue = item.prob_up ?? item.prob ?? 0;
                     const barContainer = document.createElement("div");
                     barContainer.className = "prob-bar";
 
@@ -92,28 +106,20 @@
                     tableBody.appendChild(tr);
                 });
 
-                // Actualizar hora de última actualización
                 const now = new Date();
                 document.getElementById("lastUpdate").textContent = `Última actualización: ${now.toLocaleTimeString()}`;
 
             } catch (error) {
-                tableBody.innerHTML = "<tr><td colspan='3'>❌ Error de conexión con el servidor</td></tr>";
+                tableBody.innerHTML = "<tr><td colspan='3'>❌ Error de conexión o datos inválidos</td></tr>";
+                errorDiv.textContent = `Detalles del error: ${error.message}`;
                 console.error("Error al obtener señales:", error);
             }
         }
 
-        // Actualizar al cargar
         fetchSignals();
-
-        // Botón para actualizar manualmente
         document.getElementById("updateBtn").addEventListener("click", fetchSignals);
-
-        // Actualizar automáticamente cada 30 segundos
         setInterval(fetchSignals, REFRESH_INTERVAL);
     </script>
 </body>
 </html>
-
-
-
 

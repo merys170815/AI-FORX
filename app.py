@@ -9,8 +9,8 @@ from binance.client import Client
 # ==============================
 # 🔧 CONFIGURACIÓN
 # ==============================
-API_KEY = "rwO7WxY0j60W6yBCnZJRzR9lkypVYmywogIQ4cpV0sHkeecaVp2ebQoRz5EZWvht"
-API_SECRET = "zO8UrZDHbOOdxZmz1kVrPHebmtnyYLTymAzPsBalsoQsuJto77AZ9qd1UzH7RuN0"
+API_KEY = "TU_API_KEY"
+API_SECRET = "TU_API_SECRET"
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
 INTERVAL = "1h"

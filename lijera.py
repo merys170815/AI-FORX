@@ -1,9 +1,7 @@
-from flask import Flask, jsonify
-from flask_cors import CORS
-from joblib import load
 import pandas as pd
 import numpy as np
 import time
+import joblib
 from datetime import datetime, timezone
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
@@ -11,17 +9,16 @@ from binance.exceptions import BinanceAPIException
 # ==============================
 # 🔧 CONFIGURACIÓN
 # ==============================
-API_KEY = "rwO7WxY0j60W6yBCnZJRzR9lkypVYmywogIQ4cpV0sHkeecaVp2ebQoRz5EZWvht"
-API_SECRET = "zO8UrZDHbOOdxZmz1kVrPHebmtnyYLTymAzPsBalsoQsuJto77AZ9qd1UzH7RuN0"
+API_KEY = "TU_API_KEY"
+API_SECRET = "TU_API_SECRET"
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
 INTERVAL = "1h"
 HISTORICAL_LIMIT = 5000
+CHECK_INTERVAL = 5 * 60  # 5 minutos
 
 UP_THRESHOLD = 0.75
 DOWN_THRESHOLD = 0.05
-
-CHECK_INTERVAL = 5 * 60  # opcional si quieres loop interno
 
 # ==============================
 # ⚡ INDICADORES
@@ -72,20 +69,25 @@ def download_klines_safe(symbol, interval, total_limit=5000):
         last_ts = int(kl[0][0])
         attempts += 1
         time.sleep(0.2)
+
     df = pd.DataFrame(all_klines, columns=[
         'Open_time', 'Open', 'High', 'Low', 'Close', 'Volume',
         'Close_time', 'Quote_asset_volume', 'Trades', 'Taker_buy_base',
         'Taker_buy_quote', 'Ignore'
     ])
-    for col in ["Open","High","Low","Close","Volume"]:
+    for col in ["Open", "High", "Low", "Close", "Volume"]:
         df[col] = df[col].astype(float)
     df["Open_time"] = pd.to_datetime(df["Open_time"], unit='ms')
     df.set_index("Open_time", inplace=True)
+
+    # Evitar SettingWithCopyWarning
+    df = df.copy()
     df.ffill(inplace=True)
     df.bfill(inplace=True)
     return df
 
 def add_features_full(df, feature_cols):
+    """Genera todas las features necesarias para tu modelo."""
     df = df.copy()
     df['ret'] = df['Close'].pct_change()
     df['ema_20'] = df['Close'].ewm(span=20).mean()
@@ -99,36 +101,41 @@ def add_features_full(df, feature_cols):
     df['vol_diff'] = df['Volume'] - df['Volume'].shift(1)
     df['vol_ratio'] = df['Volume'] / df['Volume'].rolling(20).mean()
 
+    # Retardos de precios y volumen
     for lag in range(1, 6):
         df[f'ret_{lag}'] = df['ret'].shift(lag)
         df[f'vol_{lag}'] = df['Volume'].shift(lag)
         df[f'close_{lag}'] = df['Close'].shift(lag)
 
+    # Asegurar todas las columnas del modelo
     for col in feature_cols:
         if col not in df.columns:
             df[col] = 0.0
+
     df = df[feature_cols]
     df.ffill(inplace=True)
     df.bfill(inplace=True)
     return df
 
 def predict_signal(model, df):
+    """Devuelve la probabilidad y señal en español."""
     X = df.iloc[-1:].copy()
+    X.ffill(inplace=True)
+    X.bfill(inplace=True)
     prob = model.predict_proba(X)[0][1]
+
     if prob >= UP_THRESHOLD:
         signal = "🟢 Comprar"
     elif prob <= DOWN_THRESHOLD:
         signal = "🔴 Vender"
     else:
         signal = "⚪ Mantener"
+
     return prob, signal
 
 # ==============================
-# 🚀 INICIO DE API
+# 🚀 INICIO
 # ==============================
-app = Flask(__name__)
-CORS(app)
-
 try:
     client = Client(API_KEY, API_SECRET)
     client.futures_ping()
@@ -137,24 +144,39 @@ except Exception as e:
     print("❌ Error al conectar a Binance:", e)
     exit(1)
 
-print("🧠 Cargando modelo y features...")
-model = load("binance_ai_lgbm_optuna_full.pkl")
-feature_cols = model.feature_name_
-print("✅ Modelo cargado correctamente.")
+print("🧠 Cargando modelo entrenado y features...")
+model = joblib.load("binance_ai_lgbm_optuna_full.pkl")
+feature_cols = model.feature_name_  # columnas exactas que usaste en el entrenamiento
+print("✅ Modelo y features cargados correctamente.")
+print(f"⏳ Monitoreando en tiempo real ({INTERVAL}) cada {CHECK_INTERVAL // 60} minutos...\n")
 
-@app.route("/api/signals")
-def api_signals():
-    results = []
-    for symbol in SYMBOLS:
-        df = download_klines_safe(symbol, INTERVAL, HISTORICAL_LIMIT)
-        df_features = add_features_full(df, feature_cols)
-        prob, signal = predict_signal(model, df_features)
-        results.append({
-            "symbol": symbol,
-            "prob_up": round(prob, 3),
-            "signal": signal
-        })
-    return jsonify(results)
+last_checked = {}
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+while True:
+    try:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n[{now}] 🔄 Actualizando señales...")
+
+        for symbol in SYMBOLS:
+            df = download_klines_safe(symbol, INTERVAL, HISTORICAL_LIMIT)
+            if df.empty:
+                print(f"⚠️ {symbol}: no hay datos descargados, se omite.")
+                continue
+
+            last_close = df.index[-1]
+            if symbol in last_checked and last_close == last_checked[symbol]:
+                continue
+
+            df_features = add_features_full(df, feature_cols)
+            prob, signal = predict_signal(model, df_features)
+            print(f"   {symbol:<10} → {signal} | Prob subida: {prob:.3f}")
+            last_checked[symbol] = last_close
+
+        time.sleep(CHECK_INTERVAL)
+
+    except BinanceAPIException as e:
+        print(f"⚠️ Error API Binance: {e}")
+        time.sleep(10)
+    except Exception as e:
+        print(f"❌ Error general: {e}")
+        time.sleep(10)

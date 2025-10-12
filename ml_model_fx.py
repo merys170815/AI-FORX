@@ -16,8 +16,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, roc_auc_score, classification_report, confusion_matrix
 import warnings
 warnings.filterwarnings("ignore")
+import os
 
 # ---------------- CONFIG ----------------
+
 API_KEY = os.getenv("BINANCE_API_KEY") or "TU_API_KEY_TEMPORAL"
 API_SECRET = os.getenv("BINANCE_API_SECRET") or "TU_API_SECRET_TEMPORAL"
 
