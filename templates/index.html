@@ -1,73 +1,119 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FX AI PRO 🤖</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      background: linear-gradient(135deg, #0a0a23, #1a1a3d);
-      color: white;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-    }
-    h1 { font-size: 2.2em; margin-bottom: 20px; color: #00ffff; }
-    button {
-      background-color: #00ffff;
-      border: none;
-      padding: 15px 30px;
-      border-radius: 10px;
-      font-size: 1.1em;
-      cursor: pointer;
-      transition: 0.3s;
-    }
-    button:hover { background-color: #00b3b3; }
-    #result {
-      margin-top: 30px;
-      font-size: 1.3em;
-      color: #fff;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <title>Crypto Signals Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f0f2f5; padding: 20px; }
+        h1 { text-align: center; margin-bottom: 20px; }
+        table { width: 80%; margin: auto; border-collapse: collapse; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        th, td { padding: 12px 15px; text-align: center; border-bottom: 1px solid #ddd; }
+        th { background-color: #333; color: white; }
+        tr:hover { background-color: #f1f1f1; }
+        .signal-buy { color: #27ae60; font-weight: bold; }
+        .signal-sell { color: #c0392b; font-weight: bold; }
+        .signal-hold { color: #7f8c8d; font-weight: bold; }
+        .prob-bar { height: 16px; border-radius: 8px; background: #ddd; margin: auto; position: relative; width: 80%; }
+        .prob-fill { height: 100%; border-radius: 8px; text-align: center; color: white; font-size: 12px; line-height: 16px; }
+        #updateBtn { display: block; margin: 20px auto; padding: 10px 25px; font-size: 16px; cursor: pointer; background-color: #3498db; color: white; border: none; border-radius: 5px; }
+        #updateBtn:hover { background-color: #2980b9; }
+        #lastUpdate { text-align: center; margin-top: 10px; font-size: 14px; color: #555; }
+    </style>
 </head>
 <body>
-  <h1>FX AI PRO 🤖</h1>
-  <button onclick="obtenerSenal()">Obtener señal actual</button>
-  <div id="result">Esperando señal...</div>
+    <h1>Crypto Signals Dashboard</h1>
+    <button id="updateBtn">Actualizar Ahora</button>
+    <table>
+        <thead>
+            <tr>
+                <th>Símbolo</th>
+                <th>Señal</th>
+                <th>Probabilidad</th>
+            </tr>
+        </thead>
+        <tbody id="signalsTable">
+            <tr><td colspan="3">Cargando...</td></tr>
+        </tbody>
+    </table>
+    <div id="lastUpdate"></div>
 
- <script>
-  async function obtenerSenal() {
-    const resultDiv = document.getElementById("result");
-    resultDiv.innerHTML = "⏳ Consultando señal...";
-    try {
-      const response = await fetch("https://fx-ai-pro.onrender.com/api/signal");
-      const data = await response.json();
-      if (data.error) {
-        resultDiv.innerHTML = "⚠️ Error al obtener datos: " + data.error;
-      } else {
-        resultDiv.innerHTML = `
-          <p><strong>Par:</strong> ${data.ticker}</p>
-          <p><strong>Probabilidad de subida:</strong> ${(data.p_up * 100).toFixed(2)}%</p>
-          <p><strong>Señal:</strong>
-            <span style="color:${
-              data.signal === 'LONG' ? 'lime' : data.signal === 'SHORT' ? 'red' : 'yellow'
-            }">
-              ${data.signal}
-            </span>
-          </p>
-        `;
-      }
-    } catch (err) {
-      resultDiv.innerHTML = "❌ Error de conexión con el servidor.";
-    }
-  }
-</script>
+    <script>
+        const API_URL = "http://127.0.0.1:5000/api/signals";
+        const REFRESH_INTERVAL = 30 * 1000; // 30 segundos
 
+        async function fetchSignals() {
+            const tableBody = document.getElementById("signalsTable");
+            tableBody.innerHTML = "<tr><td colspan='3'>Cargando...</td></tr>";
+
+            try {
+                const response = await fetch(API_URL);
+                const data = await response.json();
+
+                if (!Array.isArray(data)) {
+                    tableBody.innerHTML = "<tr><td colspan='3'>Error en la respuesta del servidor</td></tr>";
+                    return;
+                }
+
+                tableBody.innerHTML = "";
+                data.forEach(item => {
+                    const tr = document.createElement("tr");
+
+                    const tdSymbol = document.createElement("td");
+                    tdSymbol.textContent = item.symbol;
+
+                    const tdSignal = document.createElement("td");
+                    tdSignal.textContent = item.signal;
+                    if (item.signal.includes("Comprar")) tdSignal.className = "signal-buy";
+                    else if (item.signal.includes("Vender")) tdSignal.className = "signal-sell";
+                    else tdSignal.className = "signal-hold";
+
+                    const tdProb = document.createElement("td");
+                    const probValue = item.prob_up !== undefined ? item.prob_up : item.prob;
+                    const barContainer = document.createElement("div");
+                    barContainer.className = "prob-bar";
+
+                    const barFill = document.createElement("div");
+                    barFill.className = "prob-fill";
+                    barFill.style.width = `${probValue * 100}%`;
+
+                    if (probValue >= 0.75) barFill.style.backgroundColor = "#27ae60";
+                    else if (probValue <= 0.05) barFill.style.backgroundColor = "#c0392b";
+                    else barFill.style.backgroundColor = "#7f8c8d";
+
+                    barFill.textContent = `${(probValue*100).toFixed(1)}%`;
+
+                    barContainer.appendChild(barFill);
+                    tdProb.appendChild(barContainer);
+
+                    tr.appendChild(tdSymbol);
+                    tr.appendChild(tdSignal);
+                    tr.appendChild(tdProb);
+
+                    tableBody.appendChild(tr);
+                });
+
+                // Actualizar hora de última actualización
+                const now = new Date();
+                document.getElementById("lastUpdate").textContent = `Última actualización: ${now.toLocaleTimeString()}`;
+
+            } catch (error) {
+                tableBody.innerHTML = "<tr><td colspan='3'>❌ Error de conexión con el servidor</td></tr>";
+                console.error("Error al obtener señales:", error);
+            }
+        }
+
+        // Actualizar al cargar
+        fetchSignals();
+
+        // Botón para actualizar manualmente
+        document.getElementById("updateBtn").addEventListener("click", fetchSignals);
+
+        // Actualizar automáticamente cada 30 segundos
+        setInterval(fetchSignals, REFRESH_INTERVAL);
+    </script>
 </body>
 </html>
+
+
 
 

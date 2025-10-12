@@ -1,127 +1,160 @@
-# app.py
 from flask import Flask, jsonify, render_template
 from flask_cors import CORS
 from joblib import load
-import yfinance as yf
-import ta
 import pandas as pd
 import numpy as np
+import time
+from binance.client import Client
 
+# ==============================
+# 🔧 CONFIGURACIÓN
+# ==============================
+API_KEY = "rwO7WxY0j60W6yBCnZJRzR9lkypVYmywogIQ4cpV0sHkeecaVp2ebQoRz5EZWvht"
+API_SECRET = "zO8UrZDHbOOdxZmz1kVrPHebmtnyYLTymAzPsBalsoQsuJto77AZ9qd1UzH7RuN0"
+
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+INTERVAL = "1h"
+HISTORICAL_LIMIT = 5000
+
+UP_THRESHOLD = 0.75
+DOWN_THRESHOLD = 0.05
+
+# ==============================
+# ⚡ INDICADORES
+# ==============================
+def compute_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def compute_macd(series, fast=12, slow=26, signal=9):
+    ema_fast = series.ewm(span=fast, adjust=False).mean()
+    ema_slow = series.ewm(span=slow, adjust=False).mean()
+    macd = ema_fast - ema_slow
+    signal_line = macd.ewm(span=signal, adjust=False).mean()
+    return macd, signal_line
+
+def compute_atr(df, period=14):
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean()
+    return atr
+
+# ==============================
+# ⚙️ FUNCIONES PRINCIPALES
+# ==============================
+def download_klines_safe(symbol, interval, total_limit=5000):
+    all_klines = []
+    remaining = total_limit
+    last_ts = None
+    attempts = 0
+    while remaining > 0 and attempts < 50:
+        batch = min(remaining, 1000)
+        params = {"symbol": symbol, "interval": interval, "limit": batch}
+        if last_ts:
+            params["endTime"] = last_ts - 1
+        kl = client.futures_klines(**params)
+        if not kl:
+            break
+        all_klines = kl + all_klines
+        remaining -= len(kl)
+        last_ts = int(kl[0][0])
+        attempts += 1
+        time.sleep(0.2)
+    df = pd.DataFrame(all_klines, columns=[
+        'Open_time', 'Open', 'High', 'Low', 'Close', 'Volume',
+        'Close_time', 'Quote_asset_volume', 'Trades', 'Taker_buy_base',
+        'Taker_buy_quote', 'Ignore'
+    ])
+    for col in ["Open","High","Low","Close","Volume"]:
+        df[col] = df[col].astype(float)
+    df["Open_time"] = pd.to_datetime(df["Open_time"], unit='ms')
+    df.set_index("Open_time", inplace=True)
+    df.ffill(inplace=True)
+    df.bfill(inplace=True)
+    return df
+
+def add_features_full(df, feature_cols):
+    df = df.copy()
+    df['ret'] = df['Close'].pct_change()
+    df['ema_20'] = df['Close'].ewm(span=20).mean()
+    df['ema_50'] = df['Close'].ewm(span=50).mean()
+    df['ema_100'] = df['Close'].ewm(span=100).mean()
+    df['ema_diff_20_50'] = df['ema_20'] - df['ema_50']
+    df['ema_diff_50_100'] = df['ema_50'] - df['ema_100']
+    df['rsi'] = compute_rsi(df['Close'])
+    df['macd'], df['signal'] = compute_macd(df['Close'])
+    df['atr'] = compute_atr(df)
+    df['vol_diff'] = df['Volume'] - df['Volume'].shift(1)
+    df['vol_ratio'] = df['Volume'] / df['Volume'].rolling(20).mean()
+
+    for lag in range(1, 6):
+        df[f'ret_{lag}'] = df['ret'].shift(lag)
+        df[f'vol_{lag}'] = df['Volume'].shift(lag)
+        df[f'close_{lag}'] = df['Close'].shift(lag)
+
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = 0.0
+    df = df[feature_cols]
+    df.ffill(inplace=True)
+    df.bfill(inplace=True)
+    return df
+
+def predict_signal(model, df):
+    X = df.iloc[-1:].copy()
+    prob = model.predict_proba(X)[0][1]
+    if prob >= UP_THRESHOLD:
+        signal = "🟢 Comprar"
+    elif prob <= DOWN_THRESHOLD:
+        signal = "🔴 Vender"
+    else:
+        signal = "⚪ Mantener"
+    return prob, signal
+
+# ==============================
+# 🚀 INICIO DE APP WEB
+# ==============================
 app = Flask(__name__)
 CORS(app)
 
-# Cargar modelo entrenado
-MODEL = load("fx_model_ai_pro.pkl")
-TICKER = "EURUSD=X"
-P_UP_THRESHOLD = 0.65
-P_DOWN_THRESHOLD = 0.35
+try:
+    client = Client(API_KEY, API_SECRET)
+    client.futures_ping()
+    print("✅ Conexión a Binance Futures OK")
+except Exception as e:
+    print("❌ Error al conectar a Binance:", e)
+    exit(1)
 
-def build_latest_features_safe(ticker=TICKER, period="20d", interval="1h"):
-    df = yf.download(ticker, period=period, interval=interval)
-    print("Columnas descargadas (raw):", df.columns.tolist())
-
-    if df.empty:
-        return None
-
-    # Aplanar MultiIndex de columnas si lo hay
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [col[0] for col in df.columns]
-
-    print("Columnas aplanadas:", df.columns.tolist())
-
-    # Detectar columna de precio
-    if "Adj Close" in df.columns:
-        price_col = "Adj Close"
-    elif "Close" in df.columns:
-        price_col = "Close"
-    elif "Open" in df.columns:
-        price_col = "Open"
-    else:
-        print("No hay columna de precio válida")
-        return None
-
-    print("Columna de precio usada:", price_col)
-
-    # Indicadores técnicos (ajustamos ventanas para period corto)
-    df["ema20"] = ta.trend.EMAIndicator(df[price_col], window=20).ema_indicator()
-    df["ema50"] = ta.trend.EMAIndicator(df[price_col], window=50).ema_indicator()
-    # Cambiamos ema200 a 50 si hay pocos datos
-    win_ema200 = min(200, len(df))
-    df["ema200"] = ta.trend.EMAIndicator(df[price_col], window=win_ema200).ema_indicator()
-    df["rsi14"] = ta.momentum.RSIIndicator(df[price_col], window=14).rsi()
-    macd = ta.trend.MACD(df[price_col])
-    df["macd"] = macd.macd()
-    df["macd_signal"] = macd.macd_signal()
-    df["macd_hist"] = df["macd"] - df["macd_signal"]
-    win_atr14 = min(14, len(df))
-    df["atr14"] = ta.volatility.AverageTrueRange(df["High"], df["Low"], df[price_col], window=win_atr14).average_true_range()
-
-    # Rendimientos y volatilidad
-    df["ret_1"] = df[price_col].pct_change(1)
-    df["ret_3"] = df[price_col].pct_change(3)
-    df["vol_rolling"] = df["ret_1"].rolling(24).std()
-
-    # Soportes y resistencias
-    df["sr_high20"] = df["High"].rolling(20).max()
-    df["sr_low20"] = df["Low"].rolling(20).min()
-
-    # Lags
-    for lag in (1, 2, 3):
-        df[f"close_lag_{lag}"] = df[price_col].shift(lag)
-        df[f"rsi_lag_{lag}"] = df["rsi14"].shift(lag)
-
-    df = df.dropna()
-    if df.empty:
-        print("DataFrame vacío después de calcular indicadores")
-        return None
-
-    return df.iloc[-1:]
+print("🧠 Cargando modelo y features...")
+model = load("binance_ai_lgbm_optuna_full.pkl")
+feature_cols = model.feature_name_
+print("✅ Modelo cargado correctamente.")
 
 @app.route("/")
 def home():
-    return render_template("index.html")
+    return render_template("index.html")  # tu HTML para mostrar señales
 
-@app.route("/api/signal", methods=["GET"])
-def api_signal():
-    feats = build_latest_features_safe()
-    if feats is None:
-        return jsonify({"error": "No hay datos recientes o faltan columnas de precio"}), 500
-
-    feature_cols = [
-        "ema20","ema50","ema200","rsi14","macd","macd_hist","atr14",
-        "ret_1","ret_3","vol_rolling","sr_high20","sr_low20",
-        "close_lag_1","close_lag_2","close_lag_3","rsi_lag_1","rsi_lag_2","rsi_lag_3"
-    ]
-
-    # Verificar columnas antes de predecir
-    X = feats[feature_cols]
-    print("Columnas para el modelo:", X.columns.tolist())
-    print("Valores NaN en X:", X.isna().sum())
-
-    if X.isna().any().any():
-        return jsonify({"error": "Hay NaN en las features, no se puede predecir"}), 500
-
-    p_up = float(MODEL.predict_proba(X)[:,1][0])
-
-    if p_up > P_UP_THRESHOLD:
-        signal = "LONG"
-    elif p_up < P_DOWN_THRESHOLD:
-        signal = "SHORT"
-    else:
-        signal = "NEUTRAL"
-
-    return jsonify({
-        "ticker": TICKER,
-        "p_up": round(p_up, 4),
-        "signal": signal
-    })
+@app.route("/api/signals")
+def api_signals():
+    results = []
+    for symbol in SYMBOLS:
+        df = download_klines_safe(symbol, INTERVAL, HISTORICAL_LIMIT)
+        df_features = add_features_full(df, feature_cols)
+        prob, signal = predict_signal(model, df_features)
+        results.append({
+            "symbol": symbol,
+            "prob_up": round(prob, 3),
+            "signal": signal
+        })
+    return jsonify(results)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-
-
-
-
-
-
-
