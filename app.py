@@ -1,160 +1,139 @@
 from flask import Flask, jsonify, render_template
 from flask_cors import CORS
-from joblib import load
 import pandas as pd
 import numpy as np
-import time
+import joblib, time, os
+from datetime import datetime, timezone
 from binance.client import Client
+import ta
 
 # ==============================
 # 🔧 CONFIGURACIÓN
 # ==============================
-API_KEY = "TU_API_KEY"
-API_SECRET = "TU_API_SECRET"
+API_KEY = os.getenv("API_KEY") or "TU_API_KEY_REAL"
+API_SECRET = os.getenv("API_SECRET") or "TU_API_SECRET_REAL"
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
 INTERVAL = "1h"
-HISTORICAL_LIMIT = 5000
+HISTORICAL_LIMIT = 1500
 
-UP_THRESHOLD = 0.75
-DOWN_THRESHOLD = 0.05
+UP_THRESHOLD = 0.55
+DOWN_THRESHOLD = 0.45
 
-# ==============================
-# ⚡ INDICADORES
-# ==============================
-def compute_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-def compute_macd(series, fast=12, slow=26, signal=9):
-    ema_fast = series.ewm(span=fast, adjust=False).mean()
-    ema_slow = series.ewm(span=slow, adjust=False).mean()
-    macd = ema_fast - ema_slow
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    return macd, signal_line
-
-def compute_atr(df, period=14):
-    high_low = df['High'] - df['Low']
-    high_close = np.abs(df['High'] - df['Close'].shift())
-    low_close = np.abs(df['Low'] - df['Close'].shift())
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean()
-    return atr
+MODEL_FILE = "binance_ai_lgbm_optuna_full.pkl"
 
 # ==============================
-# ⚙️ FUNCIONES PRINCIPALES
+# ⚙️ FUNCIONES DE INDICADORES
 # ==============================
-def download_klines_safe(symbol, interval, total_limit=5000):
-    all_klines = []
-    remaining = total_limit
-    last_ts = None
-    attempts = 0
-    while remaining > 0 and attempts < 50:
-        batch = min(remaining, 1000)
-        params = {"symbol": symbol, "interval": interval, "limit": batch}
-        if last_ts:
-            params["endTime"] = last_ts - 1
-        kl = client.futures_klines(**params)
-        if not kl:
-            break
-        all_klines = kl + all_klines
-        remaining -= len(kl)
-        last_ts = int(kl[0][0])
-        attempts += 1
-        time.sleep(0.2)
-    df = pd.DataFrame(all_klines, columns=[
-        'Open_time', 'Open', 'High', 'Low', 'Close', 'Volume',
-        'Close_time', 'Quote_asset_volume', 'Trades', 'Taker_buy_base',
-        'Taker_buy_quote', 'Ignore'
-    ])
-    for col in ["Open","High","Low","Close","Volume"]:
-        df[col] = df[col].astype(float)
-    df["Open_time"] = pd.to_datetime(df["Open_time"], unit='ms')
+def ichimoku(df):
+    high, low, close = df["High"], df["Low"], df["Close"]
+    ich = ta.trend.IchimokuIndicator(high=high, low=low, window1=9, window2=26, window3=52)
+    tenkan = ich.ichimoku_conversion_line()
+    kijun = ich.ichimoku_base_line()
+    senkou_a = ich.ichimoku_a()
+    senkou_b = ich.ichimoku_b()
+    chikou = close.shift(-26)
+    return tenkan, kijun, senkou_a, senkou_b, chikou
+
+def compute_rsi(close, period=14):
+    return ta.momentum.RSIIndicator(close, window=period).rsi()
+
+def compute_atr(df, window=14):
+    return ta.volatility.AverageTrueRange(df["High"], df["Low"], df["Close"], window=window).average_true_range()
+
+def download_klines_safe(sym, interval, limit=1500):
+    df = pd.DataFrame(client.futures_klines(symbol=sym, interval=interval, limit=limit),
+                      columns=["Open_time","Open","High","Low","Close","Volume","Close_time",
+                               "Quote_asset_volume","Number_of_trades","Taker_buy_base","Taker_buy_quote","Ignore"])
+    for c in ["Open","High","Low","Close","Volume"]:
+        df[c] = df[c].astype(float)
+    df["Open_time"] = pd.to_datetime(df["Open_time"], unit="ms")
     df.set_index("Open_time", inplace=True)
     df.ffill(inplace=True)
     df.bfill(inplace=True)
     return df
 
-def add_features_full(df, feature_cols):
-    df = df.copy()
-    df['ret'] = df['Close'].pct_change()
-    df['ema_20'] = df['Close'].ewm(span=20).mean()
-    df['ema_50'] = df['Close'].ewm(span=50).mean()
-    df['ema_100'] = df['Close'].ewm(span=100).mean()
-    df['ema_diff_20_50'] = df['ema_20'] - df['ema_50']
-    df['ema_diff_50_100'] = df['ema_50'] - df['ema_100']
-    df['rsi'] = compute_rsi(df['Close'])
-    df['macd'], df['signal'] = compute_macd(df['Close'])
-    df['atr'] = compute_atr(df)
-    df['vol_diff'] = df['Volume'] - df['Volume'].shift(1)
-    df['vol_ratio'] = df['Volume'] / df['Volume'].rolling(20).mean()
-
-    for lag in range(1, 6):
-        df[f'ret_{lag}'] = df['ret'].shift(lag)
-        df[f'vol_{lag}'] = df['Volume'].shift(lag)
-        df[f'close_{lag}'] = df['Close'].shift(lag)
-
-    for col in feature_cols:
-        if col not in df.columns:
-            df[col] = 0.0
-    df = df[feature_cols]
-    df.ffill(inplace=True)
-    df.bfill(inplace=True)
-    return df
-
-def predict_signal(model, df):
-    X = df.iloc[-1:].copy()
-    prob = model.predict_proba(X)[0][1]
-    if prob >= UP_THRESHOLD:
-        signal = "🟢 Comprar"
-    elif prob <= DOWN_THRESHOLD:
-        signal = "🔴 Vender"
-    else:
-        signal = "⚪ Mantener"
-    return prob, signal
-
 # ==============================
-# 🚀 INICIO DE APP WEB
+# 🚀 APP WEB FLASK
 # ==============================
 app = Flask(__name__)
 CORS(app)
 
+# Conectar a Binance
 try:
     client = Client(API_KEY, API_SECRET)
     client.futures_ping()
-    print("✅ Conexión a Binance Futures OK")
+    print("✅ Conexión con Binance REAL OK")
 except Exception as e:
-    print("❌ Error al conectar a Binance:", e)
+    print("❌ No se pudo conectar:", e)
     exit(1)
 
-print("🧠 Cargando modelo y features...")
-model = load("binance_ai_lgbm_optuna_full.pkl")
-feature_cols = model.feature_name_
+# Cargar modelo
+print("🧠 Cargando modelo IA...")
+model = joblib.load(MODEL_FILE)
+feature_cols = model.feature_name_ if hasattr(model, "feature_name_") else model["features"]
 print("✅ Modelo cargado correctamente.")
 
 @app.route("/")
 def home():
-    return render_template("index.html")  # tu HTML para mostrar señales
+    return render_template("index.html")  # Puedes mostrar las señales aquí
 
 @app.route("/api/signals")
 def api_signals():
-    results = []
-    for symbol in SYMBOLS:
-        df = download_klines_safe(symbol, INTERVAL, HISTORICAL_LIMIT)
-        df_features = add_features_full(df, feature_cols)
-        prob, signal = predict_signal(model, df_features)
-        results.append({
-            "symbol": symbol,
-            "prob_up": round(prob, 3),
-            "signal": signal
-        })
-    return jsonify(results)
+    signals = []
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    for sym in SYMBOLS:
+        try:
+            df = download_klines_safe(sym, INTERVAL, HISTORICAL_LIMIT)
+            tenkan, kijun, senkou_a, senkou_b, chikou = ichimoku(df)
+            df["tenkan"] = tenkan
+            df["kijun"] = kijun
+            df["senkou_a"] = senkou_a
+            df["senkou_b"] = senkou_b
+            df["chikou"] = chikou
+            df["rsi"] = compute_rsi(df["Close"])
+            df["atr"] = compute_atr(df)
+
+            for c in feature_cols:
+                if c not in df.columns:
+                    df[c] = 0.0
+
+            X = df[feature_cols].ffill().bfill()
+            prob = float(model.predict_proba(X.iloc[[-1]])[0][1])
+            price = df["Close"].iloc[-1]
+
+            confirmations = 0
+            if price > max(senkou_a.iloc[-1], senkou_b.iloc[-1]): confirmations += 1
+            if tenkan.iloc[-1] > kijun.iloc[-1]: confirmations += 1
+            if chikou.iloc[-1] > price: confirmations += 1
+            rsi = df["rsi"].iloc[-1]
+            if 40 <= rsi <= 70: confirmations += 1
+            atr = df["atr"].iloc[-1] if not pd.isna(df["atr"].iloc[-1]) else 0.0
+            if atr > 0 and (atr / price) < 0.02: confirmations += 1
+
+            signal = "⚪ HOLD"
+            if prob >= UP_THRESHOLD and confirmations >= 2:
+                signal = "🟢 BUY"
+            elif prob <= DOWN_THRESHOLD and confirmations >= 2:
+                signal = "🔴 SELL"
+
+            signals.append({
+                "timestamp": now,
+                "symbol": sym,
+                "signal": signal,
+                "prob": round(prob, 3),
+                "confirmations": confirmations,
+                "price": round(price, 2)
+            })
+        except Exception as e:
+            signals.append({
+                "symbol": sym,
+                "error": str(e)
+            })
+            continue
+
+    return jsonify(signals)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

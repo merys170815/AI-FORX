@@ -1,182 +1,170 @@
-import pandas as pd
+# lijera_real_ichimoku_signals.py
+# ✅ Modo REAL (solo señales, sin trading)
+# IA + Ichimoku + RSI + ATR confirmaciones
+
+import os, time, math, csv
 import numpy as np
-import time
+import pandas as pd
 import joblib
 from datetime import datetime, timezone
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
+import ta
 
-# ==============================
-# 🔧 CONFIGURACIÓN
-# ==============================
-API_KEY = "TU_API_KEY"
-API_SECRET = "TU_API_SECRET"
+# ---------------- CONFIG ----------------
+API_KEY = os.getenv("API_KEY")       # asegúrate de tener tus claves configuradas
+API_SECRET = os.getenv("API_SECRET")
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
 INTERVAL = "1h"
-HISTORICAL_LIMIT = 5000
+HISTORICAL_LIMIT = 1500
 CHECK_INTERVAL = 5 * 60  # 5 minutos
 
-UP_THRESHOLD = 0.75
-DOWN_THRESHOLD = 0.05
+UP_THRESHOLD = 0.55
+DOWN_THRESHOLD = 0.45
 
-# ==============================
-# ⚡ INDICADORES
-# ==============================
-def compute_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+MODEL_FILE = "binance_ai_lgbm_optuna_full.pkl"
+TRADES_LOG = "trades_log.csv"
 
-def compute_macd(series, fast=12, slow=26, signal=9):
-    ema_fast = series.ewm(span=fast, adjust=False).mean()
-    ema_slow = series.ewm(span=slow, adjust=False).mean()
-    macd = ema_fast - ema_slow
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    return macd, signal_line
+# ---------------- FUNCIONES ----------------
+def ichimoku(df):
+    high = df['High']
+    low = df['Low']
+    close = df['Close']
+    ich = ta.trend.IchimokuIndicator(high=high, low=low, window1=9, window2=26, window3=52)
+    tenkan = ich.ichimoku_conversion_line()
+    kijun = ich.ichimoku_base_line()
+    senkou_a = ich.ichimoku_a()
+    senkou_b = ich.ichimoku_b()
+    chikou = close.shift(-26)
+    return tenkan, kijun, senkou_a, senkou_b, chikou
 
-def compute_atr(df, period=14):
-    high_low = df['High'] - df['Low']
-    high_close = np.abs(df['High'] - df['Close'].shift())
-    low_close = np.abs(df['Low'] - df['Close'].shift())
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean()
-    return atr
+def compute_rsi(close, period=14):
+    return ta.momentum.RSIIndicator(close, window=period).rsi()
 
-# ==============================
-# ⚙️ FUNCIONES PRINCIPALES
-# ==============================
-def download_klines_safe(symbol, interval, total_limit=5000):
-    all_klines = []
-    remaining = total_limit
-    last_ts = None
-    attempts = 0
-    while remaining > 0 and attempts < 50:
-        batch = min(remaining, 1000)
-        params = {"symbol": symbol, "interval": interval, "limit": batch}
-        if last_ts:
-            params["endTime"] = last_ts - 1
-        kl = client.futures_klines(**params)
-        if not kl:
-            break
-        all_klines = kl + all_klines
-        remaining -= len(kl)
-        last_ts = int(kl[0][0])
-        attempts += 1
-        time.sleep(0.2)
+def compute_atr(df, window=14):
+    return ta.volatility.AverageTrueRange(df['High'], df['Low'], df['Close'], window=window).average_true_range()
 
-    df = pd.DataFrame(all_klines, columns=[
-        'Open_time', 'Open', 'High', 'Low', 'Close', 'Volume',
-        'Close_time', 'Quote_asset_volume', 'Trades', 'Taker_buy_base',
-        'Taker_buy_quote', 'Ignore'
-    ])
-    for col in ["Open", "High", "Low", "Close", "Volume"]:
-        df[col] = df[col].astype(float)
-    df["Open_time"] = pd.to_datetime(df["Open_time"], unit='ms')
-    df.set_index("Open_time", inplace=True)
-
-    # Evitar SettingWithCopyWarning
-    df = df.copy()
-    df.ffill(inplace=True)
-    df.bfill(inplace=True)
-    return df
-
-def add_features_full(df, feature_cols):
-    """Genera todas las features necesarias para tu modelo."""
-    df = df.copy()
-    df['ret'] = df['Close'].pct_change()
-    df['ema_20'] = df['Close'].ewm(span=20).mean()
-    df['ema_50'] = df['Close'].ewm(span=50).mean()
-    df['ema_100'] = df['Close'].ewm(span=100).mean()
-    df['ema_diff_20_50'] = df['ema_20'] - df['ema_50']
-    df['ema_diff_50_100'] = df['ema_50'] - df['ema_100']
-    df['rsi'] = compute_rsi(df['Close'])
-    df['macd'], df['signal'] = compute_macd(df['Close'])
-    df['atr'] = compute_atr(df)
-    df['vol_diff'] = df['Volume'] - df['Volume'].shift(1)
-    df['vol_ratio'] = df['Volume'] / df['Volume'].rolling(20).mean()
-
-    # Retardos de precios y volumen
-    for lag in range(1, 6):
-        df[f'ret_{lag}'] = df['ret'].shift(lag)
-        df[f'vol_{lag}'] = df['Volume'].shift(lag)
-        df[f'close_{lag}'] = df['Close'].shift(lag)
-
-    # Asegurar todas las columnas del modelo
-    for col in feature_cols:
-        if col not in df.columns:
-            df[col] = 0.0
-
-    df = df[feature_cols]
-    df.ffill(inplace=True)
-    df.bfill(inplace=True)
-    return df
-
-def predict_signal(model, df):
-    """Devuelve la probabilidad y señal en español."""
-    X = df.iloc[-1:].copy()
-    X.ffill(inplace=True)
-    X.bfill(inplace=True)
-    prob = model.predict_proba(X)[0][1]
-
-    if prob >= UP_THRESHOLD:
-        signal = "🟢 Comprar"
-    elif prob <= DOWN_THRESHOLD:
-        signal = "🔴 Vender"
-    else:
-        signal = "⚪ Mantener"
-
-    return prob, signal
-
-# ==============================
-# 🚀 INICIO
-# ==============================
-try:
-    client = Client(API_KEY, API_SECRET)
-    client.futures_ping()
-    print("✅ Conexión a Binance Futures OK")
-except Exception as e:
-    print("❌ Error al conectar a Binance:", e)
-    exit(1)
-
-print("🧠 Cargando modelo entrenado y features...")
-model = joblib.load("binance_ai_lgbm_optuna_full.pkl")
-feature_cols = model.feature_name_  # columnas exactas que usaste en el entrenamiento
-print("✅ Modelo y features cargados correctamente.")
-print(f"⏳ Monitoreando en tiempo real ({INTERVAL}) cada {CHECK_INTERVAL // 60} minutos...\n")
-
-last_checked = {}
-
-while True:
+def init_client_real(api_key, api_secret):
+    c = Client(api_key, api_secret)
     try:
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"\n[{now}] 🔄 Actualizando señales...")
+        c.FUTURES_URL = "https://fapi.binance.com/fapi"
+    except:
+        pass
+    return c
 
-        for symbol in SYMBOLS:
-            df = download_klines_safe(symbol, INTERVAL, HISTORICAL_LIMIT)
-            if df.empty:
-                print(f"⚠️ {symbol}: no hay datos descargados, se omite.")
-                continue
+def download_klines_safe(sym, interval, limit=1500):
+    df = pd.DataFrame(client.futures_klines(symbol=sym, interval=interval, limit=limit),
+                      columns=["Open_time","Open","High","Low","Close","Volume","Close_time",
+                               "Quote_asset_volume","Number_of_trades","Taker_buy_base","Taker_buy_quote","Ignore"])
+    for c in ["Open","High","Low","Close","Volume"]:
+        df[c] = df[c].astype(float)
+    df["Open_time"] = pd.to_datetime(df["Open_time"], unit="ms")
+    df.set_index("Open_time", inplace=True)
+    df.ffill(inplace=True)
+    df.bfill(inplace=True)
+    return df
 
-            last_close = df.index[-1]
-            if symbol in last_checked and last_close == last_checked[symbol]:
-                continue
+def log_trade(entry: dict):
+    header = ["timestamp","symbol","signal","prob","price","extra"]
+    write_header = not os.path.exists(TRADES_LOG)
+    with open(TRADES_LOG, "a", newline="") as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(header)
+        w.writerow([
+            entry.get("timestamp"), entry.get("symbol"), entry.get("signal"),
+            round(entry.get("prob",0),4), entry.get("price"), entry.get("extra","")
+        ])
 
-            df_features = add_features_full(df, feature_cols)
-            prob, signal = predict_signal(model, df_features)
-            print(f"   {symbol:<10} → {signal} | Prob subida: {prob:.3f}")
-            last_checked[symbol] = last_close
-
-        time.sleep(CHECK_INTERVAL)
-
-    except BinanceAPIException as e:
-        print(f"⚠️ Error API Binance: {e}")
-        time.sleep(10)
+# ---------------- MAIN ----------------
+if __name__ == "__main__":
+    client = init_client_real(API_KEY, API_SECRET)
+    try:
+        client.futures_ping()
+        print("✅ Conexión con Binance REAL OK")
     except Exception as e:
-        print(f"❌ Error general: {e}")
-        time.sleep(10)
+        print("❌ No se pudo conectar:", e)
+        raise SystemExit(1)
+
+    print("Cargando modelo IA...")
+    model = joblib.load(MODEL_FILE)
+    feature_cols = model.feature_name_ if hasattr(model, "feature_name_") else model["features"]
+    print("Modelo cargado. Features:", len(feature_cols))
+
+    last_checked = {}
+
+    while True:
+        try:
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"\n[{now}] Actualizando señales...")
+
+            for sym in SYMBOLS:
+                df = download_klines_safe(sym, INTERVAL, HISTORICAL_LIMIT)
+                if df.empty:
+                    print("Sin datos", sym)
+                    continue
+                last_close = df.index[-1]
+                if sym in last_checked and last_checked[sym] == last_close:
+                    continue
+
+                # --- Features ---
+                df_feat = df.copy()
+                tenkan, kijun, senkou_a, senkou_b, chikou = ichimoku(df_feat)
+                df_feat["tenkan"] = tenkan
+                df_feat["kijun"] = kijun
+                df_feat["senkou_a"] = senkou_a
+                df_feat["senkou_b"] = senkou_b
+                df_feat["chikou"] = chikou
+                df_feat["rsi"] = compute_rsi(df_feat['Close'])
+                df_feat["atr"] = compute_atr(df_feat)
+                for c in feature_cols:
+                    if c not in df_feat.columns:
+                        df_feat[c] = 0.0
+
+                X_row = df_feat[feature_cols].ffill().bfill()
+                prob = float(model.predict_proba(X_row.iloc[[-1]])[0][1])
+
+                # --- Confirmaciones técnicas ---
+                confirmations = 0
+                price = df["Close"].iloc[-1]
+                if price > max(senkou_a.iloc[-1], senkou_b.iloc[-1]): confirmations += 1
+                if tenkan.iloc[-1] > kijun.iloc[-1]: confirmations += 1
+                if chikou.iloc[-1] > price: confirmations += 1
+                rsi = df_feat["rsi"].iloc[-1]
+                if 40 <= rsi <= 70: confirmations += 1
+                atr = df_feat["atr"].iloc[-1] if not pd.isna(df_feat["atr"].iloc[-1]) else 0.0
+                if atr > 0 and (atr / price) < 0.02: confirmations += 1
+
+                # --- Señal IA ---
+                ia_signal = "HOLD"
+                if prob >= UP_THRESHOLD:
+                    ia_signal = "BUY"
+                elif prob <= DOWN_THRESHOLD:
+                    ia_signal = "SELL"
+
+                print(f"{sym}: prob={prob:.3f} ia={ia_signal} conf={confirmations} price={price:.2f}")
+
+                if ia_signal == "BUY" and confirmations >= 2:
+                    print(f"📈 Señal de COMPRA detectada en {sym} (prob={prob:.3f}, conf={confirmations})")
+                    log_trade({
+                        "timestamp": now, "symbol": sym, "signal": "BUY",
+                        "prob": prob, "price": price, "extra": f"conf={confirmations}"
+                    })
+                elif ia_signal == "SELL" and confirmations >= 2:
+                    print(f"📉 Señal de VENTA detectada en {sym} (prob={prob:.3f}, conf={confirmations})")
+                    log_trade({
+                        "timestamp": now, "symbol": sym, "signal": "SELL",
+                        "prob": prob, "price": price, "extra": f"conf={confirmations}"
+                    })
+
+                last_checked[sym] = last_close
+
+            time.sleep(CHECK_INTERVAL)
+
+        except BinanceAPIException as b:
+            print("BinanceAPIException:", b)
+            time.sleep(10)
+        except Exception as e:
+            print("Error general:", e)
+            time.sleep(10)
