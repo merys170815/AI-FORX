@@ -1,9 +1,8 @@
-# lijera_real_ichimoku_signals.py
+# lijera_real_ichimoku_signals_professional.py
 # ✅ Modo REAL (solo señales, sin trading)
-# IA + Ichimoku + RSI + ATR confirmaciones
+# IA + Ichimoku + RSI + ATR confirmaciones + niveles de entrada/profesionales
 
-import os, time, math, csv
-import numpy as np
+import os, time, csv
 import pandas as pd
 import joblib
 from datetime import datetime, timezone
@@ -23,7 +22,7 @@ CHECK_INTERVAL = 5 * 60  # 5 minutos
 UP_THRESHOLD = 0.55
 DOWN_THRESHOLD = 0.45
 
-MODEL_FILE = "binance_ai_lgbm_optuna_full.pkl"
+MODEL_FILE = "binance_ai_lgbm_optuna_multi_v2_multiclass.pkl"
 TRADES_LOG = "trades_log.csv"
 
 # ---------------- FUNCIONES ----------------
@@ -66,7 +65,7 @@ def download_klines_safe(sym, interval, limit=1500):
     return df
 
 def log_trade(entry: dict):
-    header = ["timestamp","symbol","signal","prob","price","extra"]
+    header = ["timestamp","symbol","signal","prob","price","SL","TP","extra"]
     write_header = not os.path.exists(TRADES_LOG)
     with open(TRADES_LOG, "a", newline="") as f:
         w = csv.writer(f)
@@ -74,7 +73,9 @@ def log_trade(entry: dict):
             w.writerow(header)
         w.writerow([
             entry.get("timestamp"), entry.get("symbol"), entry.get("signal"),
-            round(entry.get("prob",0),4), entry.get("price"), entry.get("extra","")
+            round(entry.get("prob",0),4), entry.get("price"),
+            round(entry.get("stop_loss",0),4), round(entry.get("take_profit",0),4),
+            entry.get("extra","")
         ])
 
 # ---------------- MAIN ----------------
@@ -87,9 +88,10 @@ if __name__ == "__main__":
         print("❌ No se pudo conectar:", e)
         raise SystemExit(1)
 
-    print("Cargando modelo IA...")
-    model = joblib.load(MODEL_FILE)
-    feature_cols = model.feature_name_ if hasattr(model, "feature_name_") else model["features"]
+    print("Cargando modelo IA multiclass...")
+    model_dict = joblib.load(MODEL_FILE)
+    model = model_dict["model"]
+    feature_cols = model_dict["features"]
     print("Modelo cargado. Features:", len(feature_cols))
 
     last_checked = {}
@@ -123,7 +125,22 @@ if __name__ == "__main__":
                         df_feat[c] = 0.0
 
                 X_row = df_feat[feature_cols].ffill().bfill()
-                prob = float(model.predict_proba(X_row.iloc[[-1]])[0][1])
+
+                # --- Predicción multiclass ---
+                probs = model.predict_proba(X_row.iloc[[-1]])[0]  # array [P(-1), P(0), P(1)]
+                prob_down, prob_neutral, prob_up = probs
+                if prob_up >= UP_THRESHOLD:
+                    ia_signal = "BUY"
+                    prob_signal = prob_up
+                elif prob_down >= UP_THRESHOLD:
+                    ia_signal = "SELL"
+                    prob_signal = prob_down
+                elif prob_neutral >= UP_THRESHOLD:
+                    ia_signal = "HOLD"
+                    prob_signal = prob_neutral
+                else:
+                    ia_signal = "HOLD"
+                    prob_signal = max(probs)
 
                 # --- Confirmaciones técnicas ---
                 confirmations = 0
@@ -136,26 +153,28 @@ if __name__ == "__main__":
                 atr = df_feat["atr"].iloc[-1] if not pd.isna(df_feat["atr"].iloc[-1]) else 0.0
                 if atr > 0 and (atr / price) < 0.02: confirmations += 1
 
-                # --- Señal IA ---
-                ia_signal = "HOLD"
-                if prob >= UP_THRESHOLD:
-                    ia_signal = "BUY"
-                elif prob <= DOWN_THRESHOLD:
-                    ia_signal = "SELL"
+                # --- Niveles profesionales ---
+                entry_price = price
+                stop_loss = None
+                take_profit = None
 
-                print(f"{sym}: prob={prob:.3f} ia={ia_signal} conf={confirmations} price={price:.2f}")
+                if ia_signal == "BUY":
+                    entry_price = min(price, senkou_b.iloc[-1], kijun.iloc[-1])
+                    stop_loss = entry_price - 1.5*atr
+                    take_profit = entry_price + 2*(entry_price - stop_loss)
+                elif ia_signal == "SELL":
+                    entry_price = max(price, senkou_b.iloc[-1], kijun.iloc[-1])
+                    stop_loss = entry_price + 1.5*atr
+                    take_profit = entry_price - 2*(stop_loss - entry_price)
 
-                if ia_signal == "BUY" and confirmations >= 2:
-                    print(f"📈 Señal de COMPRA detectada en {sym} (prob={prob:.3f}, conf={confirmations})")
+                print(f"{sym}: prob_up={prob_up:.3f} prob_down={prob_down:.3f} prob_neutral={prob_neutral:.3f} ia={ia_signal} conf={confirmations} price={price:.2f}")
+                if ia_signal in ["BUY","SELL"] and confirmations >= 2:
+                    print(f"📈 Señal {ia_signal} profesional en {sym} | Entrada={entry_price:.2f}, SL={stop_loss:.2f}, TP={take_profit:.2f}, Conf={confirmations}")
                     log_trade({
-                        "timestamp": now, "symbol": sym, "signal": "BUY",
-                        "prob": prob, "price": price, "extra": f"conf={confirmations}"
-                    })
-                elif ia_signal == "SELL" and confirmations >= 2:
-                    print(f"📉 Señal de VENTA detectada en {sym} (prob={prob:.3f}, conf={confirmations})")
-                    log_trade({
-                        "timestamp": now, "symbol": sym, "signal": "SELL",
-                        "prob": prob, "price": price, "extra": f"conf={confirmations}"
+                        "timestamp": now, "symbol": sym, "signal": ia_signal,
+                        "prob": prob_signal, "price": entry_price,
+                        "stop_loss": stop_loss, "take_profit": take_profit,
+                        "extra": f"conf={confirmations}"
                     })
 
                 last_checked[sym] = last_close
