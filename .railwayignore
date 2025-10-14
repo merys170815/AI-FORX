@@ -1,0 +1,44 @@
+# Ignorar entornos virtuales
+.venv/
+venv/
+env/
+
+# Ignorar cachés y archivos temporales
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.csv
+*.xlsx
+*.pkl
+*.joblib
+*.json
+
+# Ignorar datos de entrenamiento y resultados
+results_*/
+optuna_trials_*.csv
+feature_importance_*.csv
+backtest_*.csv
+trades_*.csv
+equity_curve.xlsx
+*.ipynb
+
+# Ignorar scripts de entrenamiento y análisis pesados
+ml_model_fx.py
+backtest_analysis_fixed.py
+baktesti.py
+lijera.py
+datos.py
+crear_claves_testnet.py
+main.py
+tradeview_webhook.py
+
+# Ignorar todo excepto los archivos necesarios
+!.env
+!app.py
+!requirements.txt
+!Procfile
+!templates/
+!binance_ai_lgbm_optuna_multi_v2_multiclass.pkl
+
+
