@@ -36,9 +36,6 @@
                 tabla.innerHTML = `<tr><td colspan='9' style="color:red;">Error: ${err.message}</td></tr>`;
             }
         }
-
-        setInterval(cargarSenales, 60_000); // Actualiza cada 60s
-        window.onload = cargarSenales;
     </script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; text-align:center; }
@@ -48,10 +45,22 @@
         tr:nth-child(even) { background: #1c2128; }
         h1 { color: #58a6ff; margin-top: 20px; }
         td { font-size: 14px; }
+        #refrescar-btn {
+            margin: 10px auto;
+            padding: 8px 16px;
+            font-size: 14px;
+            cursor: pointer;
+            background: #58a6ff;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+        }
+        #refrescar-btn:hover { background: #1f6feb; }
     </style>
 </head>
 <body>
     <h1>📡 Señales en Tiempo Real — AI + Ichimoku Pro</h1>
+    <button id="refrescar-btn" onclick="cargarSenales()">🔄 Refrescar manual</button>
     <table>
         <thead>
             <tr>
@@ -68,6 +77,7 @@
         </thead>
         <tbody id="tabla-body"></tbody>
     </table>
-    <p style="color:#666;">Actualiza automáticamente cada 60 segundos.</p>
+    <p style="color:#666;">Pulsa el botón para refrescar las señales.</p>
 </body>
 </html>
+

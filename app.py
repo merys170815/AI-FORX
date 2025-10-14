@@ -1,11 +1,10 @@
 from flask import Flask, jsonify, render_template
 from flask_cors import CORS
-import os, time
+import os, joblib
 import pandas as pd
-import joblib
+import ta
 from datetime import datetime, timezone
 from binance.client import Client
-import ta
 
 # ---------------- CONFIG ----------------
 API_KEY = os.getenv("API_KEY") or "TU_API_KEY_REAL"
@@ -16,7 +15,7 @@ INTERVAL = "1h"
 HISTORICAL_LIMIT = 1500
 
 UP_THRESHOLD = 0.55
-DOWN_THRESHOLD = 0.45
+DOWN_THRESHOLD = 0.55
 
 MODEL_FILE = "binance_ai_lgbm_optuna_multi_v2_multiclass.pkl"
 
@@ -24,12 +23,7 @@ MODEL_FILE = "binance_ai_lgbm_optuna_multi_v2_multiclass.pkl"
 def ichimoku(df):
     high, low, close = df['High'], df['Low'], df['Close']
     ich = ta.trend.IchimokuIndicator(high=high, low=low, window1=9, window2=26, window3=52)
-    tenkan = ich.ichimoku_conversion_line()
-    kijun = ich.ichimoku_base_line()
-    senkou_a = ich.ichimoku_a()
-    senkou_b = ich.ichimoku_b()
-    chikou = close.shift(-26)
-    return tenkan, kijun, senkou_a, senkou_b, chikou
+    return ich.ichimoku_conversion_line(), ich.ichimoku_base_line(), ich.ichimoku_a(), ich.ichimoku_b(), close.shift(-26)
 
 def compute_rsi(close, period=14):
     return ta.momentum.RSIIndicator(close, window=period).rsi()
@@ -45,7 +39,7 @@ def init_client_real(api_key, api_secret):
         pass
     return c
 
-def download_klines_safe(sym, interval, limit=1500):
+def download_klines_safe(sym, interval, limit=HISTORICAL_LIMIT):
     df = pd.DataFrame(client.futures_klines(symbol=sym, interval=interval, limit=limit),
                       columns=["Open_time","Open","High","Low","Close","Volume","Close_time",
                                "Quote_asset_volume","Number_of_trades","Taker_buy_base","Taker_buy_quote","Ignore"])
@@ -91,7 +85,7 @@ def api_signals():
             if df.empty:
                 continue
 
-            # Features y confirmaciones
+            # --- Indicadores ---
             df_feat = df.copy()
             tenkan, kijun, senkou_a, senkou_b, chikou = ichimoku(df_feat)
             df_feat["tenkan"] = tenkan
@@ -101,71 +95,56 @@ def api_signals():
             df_feat["chikou"] = chikou
             df_feat["rsi"] = compute_rsi(df_feat['Close'])
             df_feat["atr"] = compute_atr(df_feat)
+
+            # --- Preparar features para IA ---
             for c in feature_cols:
                 if c not in df_feat.columns:
                     df_feat[c] = 0.0
-
             X_row = df_feat[feature_cols].ffill().bfill()
 
-            # Predicción multiclass
+            # --- Predicción IA ---
             probs = model.predict_proba(X_row.iloc[[-1]])[0]
             prob_down, prob_neutral, prob_up = probs
+
             if prob_up >= UP_THRESHOLD:
                 ia_signal = "BUY"
                 prob_signal = prob_up
-            elif prob_down >= UP_THRESHOLD:
+            elif prob_down >= DOWN_THRESHOLD:
                 ia_signal = "SELL"
                 prob_signal = prob_down
-            elif prob_neutral >= UP_THRESHOLD:
-                ia_signal = "HOLD"
-                prob_signal = prob_neutral
             else:
                 ia_signal = "HOLD"
                 prob_signal = max(probs)
 
-            # Confirmaciones técnicas
-            confirmations = 0
+            # --- Niveles profesionales ---
             price = df["Close"].iloc[-1]
-            if price > max(senkou_a.iloc[-1], senkou_b.iloc[-1]): confirmations += 1
-            if tenkan.iloc[-1] > kijun.iloc[-1]: confirmations += 1
-            if chikou.iloc[-1] > price: confirmations += 1
-            rsi = df_feat["rsi"].iloc[-1]
-            if 40 <= rsi <= 70: confirmations += 1
             atr = df_feat["atr"].iloc[-1] if not pd.isna(df_feat["atr"].iloc[-1]) else 0.0
-            if atr > 0 and (atr / price) < 0.02: confirmations += 1
+            entry_price = stop_loss = take_profit = None
 
-            # Niveles profesionales
-            entry_price = price
-            stop_loss = None
-            take_profit = None
             if ia_signal == "BUY":
                 entry_price = min(price, senkou_b.iloc[-1], kijun.iloc[-1])
-                stop_loss = entry_price - 1.5*atr
-                take_profit = entry_price + 2*(entry_price - stop_loss)
+                stop_loss = entry_price - 1.5 * atr
+                take_profit = entry_price + 2 * (entry_price - stop_loss)
             elif ia_signal == "SELL":
                 entry_price = max(price, senkou_b.iloc[-1], kijun.iloc[-1])
-                stop_loss = entry_price + 1.5*atr
-                take_profit = entry_price - 2*(stop_loss - entry_price)
+                stop_loss = entry_price + 1.5 * atr
+                take_profit = entry_price - 2 * (stop_loss - entry_price)
 
-            # Guardar en lista con SL y TP siempre que existan
             signals.append({
                 "timestamp": now,
                 "symbol": sym,
                 "signal": ia_signal,
-                "prob": round(prob_signal, 3),
-                "confirmations": confirmations,
-                "price": round(entry_price,2),
-                "SL": round(stop_loss,2) if stop_loss is not None else None,
-                "TP": round(take_profit,2) if take_profit is not None else None
+                "prob": round(prob_signal,3),
+                "price": round(entry_price,2) if entry_price else None,
+                "SL": round(stop_loss,2) if stop_loss else None,
+                "TP": round(take_profit,2) if take_profit else None
             })
 
         except Exception as e:
             signals.append({"symbol": sym, "error": str(e)})
-            continue
 
     return jsonify(signals)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Usa el puerto de Railway o 5000 local
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
