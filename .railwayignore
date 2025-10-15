@@ -32,6 +32,8 @@ datos.py
 crear_claves_testnet.py
 main.py
 tradeview_webhook.py
+app.py
+
 
 # Ignorar todo excepto los archivos necesarios
 !.env
