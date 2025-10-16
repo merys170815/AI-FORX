@@ -2,10 +2,9 @@ from flask import Flask, jsonify, render_template
 from flask_cors import CORS
 import os, joblib
 import pandas as pd
-import numpy as np
 import ta
 from datetime import datetime, timezone
-# ⚠️ Eliminamos import de Binance ya que no lo usaremos en modo simulado
+from binance.client import Client
 
 # ---------------- CONFIG ----------------
 API_KEY = os.getenv("API_KEY") or "TU_API_KEY_REAL"
@@ -32,34 +31,20 @@ def compute_rsi(close, period=14):
 def compute_atr(df, window=14):
     return ta.volatility.AverageTrueRange(df['High'], df['Low'], df['Close'], window=window).average_true_range()
 
-# ---------------- SIMULADOR DE MERCADO ----------------
+def init_client_testnet(api_key, api_secret):
+    c = Client(api_key, api_secret, testnet=True)
+    c.FUTURES_URL = "https://testnet.binancefuture.com/fapi"
+    return c
+
+
 def download_klines_safe(sym, interval, limit=HISTORICAL_LIMIT):
-    """
-    Simula datos OHLCV para un símbolo.
-    Mantiene estructura idéntica a Binance Futures.
-    """
-    np.random.seed(abs(hash(sym)) % 2**32)
-    base_price = {
-        "BTCUSDT": 68000,
-        "ETHUSDT": 2500,
-        "BNBUSDT": 600,
-        "SOLUSDT": 150,
-        "ADAUSDT": 0.45,
-        "DOGEUSDT": 0.12
-    }.get(sym, 1000)
-
-    dates = pd.date_range(end=pd.Timestamp.utcnow(), periods=limit, freq="H")
-    prices = base_price + np.cumsum(np.random.randn(limit))  # ruido aleatorio
-
-    df = pd.DataFrame({
-        "Open": prices + np.random.randn(limit),
-        "High": prices + abs(np.random.randn(limit)),
-        "Low": prices - abs(np.random.randn(limit)),
-        "Close": prices,
-        "Volume": np.random.randint(1000, 5000, size=limit),
-    }, index=dates)
-
-    df.index.name = "Open_time"
+    df = pd.DataFrame(client.futures_klines(symbol=sym, interval=interval, limit=limit),
+                      columns=["Open_time","Open","High","Low","Close","Volume","Close_time",
+                               "Quote_asset_volume","Number_of_trades","Taker_buy_base","Taker_buy_quote","Ignore"])
+    for c in ["Open","High","Low","Close","Volume"]:
+        df[c] = df[c].astype(float)
+    df["Open_time"] = pd.to_datetime(df["Open_time"], unit="ms")
+    df.set_index("Open_time", inplace=True)
     df.ffill(inplace=True)
     df.bfill(inplace=True)
     return df
@@ -68,13 +53,21 @@ def download_klines_safe(sym, interval, limit=HISTORICAL_LIMIT):
 app = Flask(__name__)
 CORS(app)
 
-print("✅ Modo SIMULADO activado (sin conexión a Binance)")
-print("Cargando modelo IA multiclass...")
+# Inicializar cliente y modelo
+client = init_client_testnet(API_KEY, API_SECRET)
 
+try:
+    client.futures_ping()
+    print("✅ Conexión con Binance REAL OK")
+except Exception as e:
+    print("❌ No se pudo conectar:", e)
+    raise SystemExit(1)
+
+print("Cargando modelo IA multiclass...")
 model_dict = joblib.load(MODEL_FILE)
 model = model_dict["model"]
 feature_cols = model_dict["features"]
-print("✅ Modelo cargado. Features:", len(feature_cols))
+print("Modelo cargado. Features:", len(feature_cols))
 
 @app.route("/")
 def home():
@@ -140,10 +133,10 @@ def api_signals():
                 "timestamp": now,
                 "symbol": sym,
                 "signal": ia_signal,
-                "prob": round(prob_signal, 3),
-                "price": round(entry_price, 2) if entry_price else None,
-                "SL": round(stop_loss, 2) if stop_loss else None,
-                "TP": round(take_profit, 2) if take_profit else None
+                "prob": round(prob_signal,3),
+                "price": round(entry_price,2) if entry_price else None,
+                "SL": round(stop_loss,2) if stop_loss else None,
+                "TP": round(take_profit,2) if take_profit else None
             })
 
         except Exception as e:
