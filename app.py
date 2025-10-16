@@ -33,10 +33,20 @@ def compute_atr(df, window=14):
 
 def init_client_testnet(api_key, api_secret):
     c = Client(api_key, api_secret, testnet=True)
-    # Forzar todas las URLs a testnet
+
+    # Forzar URLs de FUTURES TESTNET
     c.API_URL = "https://testnet.binance.vision/api"
     c.FUTURES_URL = "https://testnet.binancefuture.com/fapi"
     c.futures_api_url = "https://testnet.binancefuture.com"
+
+    # ⚠️ Sobrescribir método interno para forzar testnet en todas las llamadas futures
+    def custom_request_api(self, method, path, signed=False, **kwargs):
+        base_url = "https://testnet.binancefuture.com"
+        return self._request(method, f"{base_url}{path}", signed, **kwargs)
+
+    import types
+    c._request_api = types.MethodType(custom_request_api, c)
+
     return c
 
 
