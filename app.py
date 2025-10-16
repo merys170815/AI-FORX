@@ -33,8 +33,12 @@ def compute_atr(df, window=14):
 
 def init_client_testnet(api_key, api_secret):
     c = Client(api_key, api_secret, testnet=True)
+    # Forzar todas las URLs a testnet
+    c.API_URL = "https://testnet.binance.vision/api"
     c.FUTURES_URL = "https://testnet.binancefuture.com/fapi"
+    c.futures_api_url = "https://testnet.binancefuture.com"
     return c
+
 
 
 def download_klines_safe(sym, interval, limit=HISTORICAL_LIMIT):
@@ -58,9 +62,9 @@ client = init_client_testnet(API_KEY, API_SECRET)
 
 try:
     client.futures_ping()
-    print("✅ Conexión con Binance REAL OK")
+    print("✅ Conexión con Binance TESTNET OK")
 except Exception as e:
-    print("❌ No se pudo conectar:", e)
+    print("❌ No se pudo conectar a testnet:", e)
     raise SystemExit(1)
 
 print("Cargando modelo IA multiclass...")
