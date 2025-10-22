@@ -240,3 +240,22 @@ fi.to_csv("feature_importance_optuna_multi_multiclass.csv", index=False)
 study.trials_dataframe().to_csv("optuna_trials_multi_multiclass.csv", index=False)
 dump({"model": final_model, "scaler": scaler, "features": X.columns.tolist()}, SAVE_MODEL)
 print("✅ Archivos guardados: modelo, predictions, feature importance, optuna trials")
+
+# ===============================
+# 🚀 Auto reentrenamiento programado cada 4 horas
+# ===============================
+import threading
+
+def auto_retrain(interval_hours=4):
+    while True:
+        print(f"\n🕒 Esperando {interval_hours} horas para reentrenar nuevamente...")
+        time.sleep(interval_hours * 3600)  # 4 horas por defecto
+        try:
+            print("\n⚡ Reentrenamiento automático iniciado...")
+            os.system(f"python {__file__}")  # vuelve a ejecutar este mismo script
+            print("✅ Reentrenamiento completado.")
+        except Exception as e:
+            print(f"❌ Error en reentrenamiento automático: {e}")
+
+# Lanzar el hilo automático
+threading.Thread(target=auto_retrain, daemon=True).start()

@@ -1,166 +1,258 @@
-# baktesti_professional_model_1y_conservative.py
-import os, joblib, time
+import os
+import joblib
 import pandas as pd
 import numpy as np
-from binance.client import Client
 import ta
-from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
+from binance.client import Client
+from datetime import datetime
+import logging
+from itertools import product
 
 # ---------------- CONFIG ----------------
-API_KEY = os.getenv("BINANCE_API_KEY") or "TU_API_KEY_TEMPORAL"
-API_SECRET = os.getenv("BINANCE_API_SECRET") or "TU_API_SECRET_TEMPORAL"
-SYMBOLS = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","ADAUSDT","DOGEUSDT"]
-INTERVAL = "1h"
-INITIAL_CAPITAL = 10000
-POSITION_SIZE = 0.05
-COMMISSION = 0.0004
-SLIPPAGE = 0.0005
-UP_THRESHOLD = 0.55
-DOWN_THRESHOLD = 0.55
-MODEL_FILE = "binance_ai_lgbm_optuna_multi_v2_multiclass.pkl"
+API_KEY = os.getenv("API_KEY") or "TU_API_KEY_REAL"
+API_SECRET = os.getenv("API_SECRET") or "TU_API_SECRET_REAL"
 
-# ---------------- FUNCIONES ----------------
-def ichimoku_levels(df):
-    ich = ta.trend.IchimokuIndicator(df['High'], df['Low'], window1=9, window2=26, window3=52)
-    return ich.ichimoku_conversion_line(), ich.ichimoku_base_line(), ich.ichimoku_a(), ich.ichimoku_b()
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+INTERVAL = "1h"
+HISTORICAL_LIMIT = 1500
+MODEL_FILE = "binance_ai_lgbm_optuna_multi_v2_multiclass.pkl"
+CAPITAL_INICIAL = 10000
+
+# ---------------- LOGGING ----------------
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+
+
+# ---------------- FUNCIONES BASE ----------------
+def init_client(api_key, api_secret):
+    client = Client(api_key, api_secret)
+    try:
+        client.futures_ping()
+        logging.info("✅ Conectado correctamente a Binance Futures.")
+    except Exception as e:
+        logging.warning(f"⚠️ No se pudo validar conexión con Binance: {e}")
+    return client
+
+
+def download_klines_safe(client, sym, interval, limit):
+    try:
+        kl = client.futures_klines(symbol=sym, interval=interval, limit=limit)
+        df = pd.DataFrame(kl, columns=[
+            "Open_time", "Open", "High", "Low", "Close", "Volume", "Close_time",
+            "Quote_asset_volume", "Number_of_trades", "Taker_buy_base", "Taker_buy_quote", "Ignore"
+        ])
+        for c in ["Open", "High", "Low", "Close", "Volume"]:
+            df[c] = df[c].astype(float)
+        df["Open_time"] = pd.to_datetime(df["Open_time"], unit="ms")
+        df.set_index("Open_time", inplace=True)
+        df.ffill(inplace=True)
+        df.bfill(inplace=True)
+        return df
+    except Exception as e:
+        logging.error(f"Error descargando datos de {sym}: {e}")
+        return pd.DataFrame()
+
+
+def ichimoku(df):
+    high, low, close = df['High'], df['Low'], df['Close']
+    ich = ta.trend.IchimokuIndicator(high=high, low=low, window1=9, window2=26, window3=52)
+    return ich.ichimoku_conversion_line(), ich.ichimoku_base_line(), ich.ichimoku_a(), ich.ichimoku_b(), close.shift(-26)
+
 
 def compute_rsi(close, period=14):
     return ta.momentum.RSIIndicator(close, window=period).rsi()
 
+
 def compute_atr(df, window=14):
     return ta.volatility.AverageTrueRange(df['High'], df['Low'], df['Close'], window=window).average_true_range()
 
-def download_historical_klines(symbol, interval, start_date, end_date):
-    client = Client(API_KEY, API_SECRET)
-    kl = []
-    start_ts = int(pd.Timestamp(start_date).timestamp() * 1000)
-    end_ts = int(pd.Timestamp(end_date).timestamp() * 1000)
-    while start_ts < end_ts:
-        data = client.futures_klines(symbol=symbol, interval=interval, limit=1000, startTime=start_ts)
-        if not data:
-            break
-        kl += data
-        start_ts = data[-1][0] + 1
-    df = pd.DataFrame(kl, columns=["Open_time","Open","High","Low","Close","Volume",
-                                   "Close_time","Quote_asset_volume","Number_of_trades",
-                                   "Taker_buy_base","Taker_buy_quote","Ignore"])
-    for c in ["Open","High","Low","Close","Volume"]:
-        df[c] = df[c].astype(float)
-    df["Open_time"] = pd.to_datetime(df["Open_time"], unit="ms")
-    df.set_index("Open_time", inplace=True)
-    return df[["Open","High","Low","Close","Volume"]]
 
-# ---------------- CARGAR MODELO ----------------
-model_dict = joblib.load(MODEL_FILE)
-model = model_dict["model"]
-feature_cols = model_dict["features"]
-scaler = model_dict.get("scaler", None)
-scaled_cols = getattr(scaler, "feature_names_in_", None)
-print(f"✅ Modelo cargado. Features: {len(feature_cols)}")
+def compute_drawdown(equity_curve):
+    equity_curve = np.array(equity_curve)
+    peak = np.maximum.accumulate(equity_curve)
+    drawdown = (equity_curve - peak) / peak
+    return abs(drawdown.min())
+
+
+# ---------------- DIAGNÓSTICO ----------------
+def diagnostico_modelo(client, model, feature_cols, symbols):
+    logging.info("\n🔍 Diagnóstico del modelo IA...")
+    for sym in symbols:
+        df = download_klines_safe(client, sym, INTERVAL, 300)
+        if df.empty:
+            continue
+
+        tenkan, kijun, senkou_a, senkou_b, chikou = ichimoku(df)
+        df["tenkan"] = tenkan
+        df["kijun"] = kijun
+        df["senkou_a"] = senkou_a
+        df["senkou_b"] = senkou_b
+        df["chikou"] = chikou
+        df["rsi"] = compute_rsi(df['Close'])
+        df["atr"] = compute_atr(df)
+        df.dropna(inplace=True)
+
+        for c in feature_cols:
+            if c not in df.columns:
+                df[c] = 0.0
+        df.ffill().bfill(inplace=True)
+
+        X = df[feature_cols].iloc[[-1]]
+        probs = model.predict_proba(X)[0]
+        prob_down, prob_neutral, prob_up = probs
+        logging.info(f"📈 {sym}: ↓ {prob_down:.2f} | → {prob_neutral:.2f} | ↑ {prob_up:.2f}")
+
 
 # ---------------- BACKTEST ----------------
-results = []
-today = datetime.utcnow()
-start_date = today - timedelta(days=365)
+def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
+    results = []
 
-for sym in SYMBOLS:
-    print(f"\n📊 Backtesting {sym} (último año)...")
-    df = download_historical_klines(sym, INTERVAL, start_date, today)
+    for sym in SYMBOLS:
+        logging.info(f"\n📊 Backtesting {sym} (UP={up_thr}, DOWN={down_thr})...")
 
-    # Indicadores para SL/TP
-    df["tenkan"], df["kijun"], df["senkou_a"], df["senkou_b"] = ichimoku_levels(df)
-    df["rsi"] = compute_rsi(df["Close"])
-    df["atr"] = compute_atr(df)
+        df = download_klines_safe(client, sym, INTERVAL, HISTORICAL_LIMIT)
+        if df.empty:
+            continue
 
-    # Preparar features
-    X = pd.DataFrame({c: df[c] if c in df.columns else 0.0 for c in feature_cols})
-    if scaler:
-        X_scaled = X.copy()
-        common_cols = [c for c in scaled_cols if c in X_scaled.columns]
-        X_scaled[common_cols] = scaler.transform(X_scaled[common_cols])
-    else:
-        X_scaled = X
+        df_feat = df.copy()
+        tenkan, kijun, senkou_a, senkou_b, chikou = ichimoku(df_feat)
+        df_feat["tenkan"] = tenkan
+        df_feat["kijun"] = kijun
+        df_feat["senkou_a"] = senkou_a
+        df_feat["senkou_b"] = senkou_b
+        df_feat["chikou"] = chikou
+        df_feat["rsi"] = compute_rsi(df_feat['Close'])
+        df_feat["atr"] = compute_atr(df_feat)
+        df_feat.dropna(inplace=True)
 
-    probs_all = model.predict_proba(X_scaled)
-    capital = INITIAL_CAPITAL
-    equity_curve = []
+        for c in feature_cols:
+            if c not in df_feat.columns:
+                df_feat[c] = 0.0
+        df_feat.ffill().bfill(inplace=True)
 
-    for i in range(len(df)-1):
-        price = df["Close"].iloc[i]
-        prob_down, prob_neutral, prob_up = probs_all[i]
+        capital = CAPITAL_INICIAL
+        position = None
+        entry_price = 0
+        trades = wins = losses = 0
+        gross_profit = gross_loss = 0
+        equity_curve = [capital]
 
-        # Señales IA
-        if prob_up >= UP_THRESHOLD:
-            signal = "BUY"
-            prob_signal = prob_up
-        elif prob_down >= DOWN_THRESHOLD:
-            signal = "SELL"
-            prob_signal = prob_down
-        else:
-            signal = "HOLD"
-            prob_signal = max(probs_all[i])
+        for i in range(1, len(df_feat)):
+            X = df_feat[feature_cols].iloc[[i]]
+            probs = model.predict_proba(X)[0]
+            prob_down, prob_neutral, prob_up = probs
 
-        entry_price = price
-        atr = df["atr"].iloc[i] if not pd.isna(df["atr"].iloc[i]) else 0.0
+            if prob_up >= up_thr:
+                ia_signal = "BUY"
+            elif prob_down >= down_thr:
+                ia_signal = "SELL"
+            else:
+                last_close = df_feat["Close"].iloc[i]
+                prev_close = df_feat["Close"].iloc[i - 1]
+                ia_signal = "BUY" if last_close > prev_close else ("SELL" if last_close < prev_close else "HOLD")
 
-        # Estrategia conservadora
-        if signal=="BUY":
-            entry_price = min(price, df["senkou_b"].iloc[i], df["kijun"].iloc[i])
-            sl = entry_price - 1.8*atr
-            tp = entry_price + 2.5*(entry_price - sl)
-        elif signal=="SELL":
-            entry_price = max(price, df["senkou_b"].iloc[i], df["kijun"].iloc[i])
-            sl = entry_price + 1.8*atr
-            tp = entry_price - 2.5*(sl - entry_price)
-        else:
-            sl = tp = None
+            price = df_feat["Close"].iloc[i]
+            atr = df_feat["atr"].iloc[i]
 
-        next_price = df["Close"].iloc[i+1]
-        pnl = 0.0
-        if signal=="BUY":
-            if next_price <= sl: pnl = -POSITION_SIZE*capital*(entry_price-sl)/entry_price
-            elif next_price >= tp: pnl = POSITION_SIZE*capital*(tp-entry_price)/entry_price
-            else: pnl = POSITION_SIZE*capital*(next_price-entry_price)/entry_price
-        elif signal=="SELL":
-            if next_price >= sl: pnl = -POSITION_SIZE*capital*(sl-entry_price)/entry_price
-            elif next_price <= tp: pnl = POSITION_SIZE*capital*(entry_price-tp)/entry_price
-            else: pnl = POSITION_SIZE*capital*(entry_price-next_price)/entry_price
+            # Dinámica de SL/TP según volatilidad reciente
+            atr_ratio = atr / price
+            sl_mult = 1.5 + (atr_ratio * 100)
+            tp_mult = 2.2 - (atr_ratio * 50)
+            tp_mult = max(1.2, tp_mult)
 
-        pnl -= POSITION_SIZE*capital*(COMMISSION+SLIPPAGE)
-        capital += pnl
+            if ia_signal == "BUY":
+                sl = price - sl_mult * atr
+                tp = price + tp_mult * atr
+            elif ia_signal == "SELL":
+                sl = price + sl_mult * atr
+                tp = price - tp_mult * atr
+            else:
+                continue
 
-        if signal in ["BUY","SELL"]:
-            results.append({
-                "timestamp": df.index[i],
-                "symbol": sym,
-                "signal": signal,
-                "prob": prob_signal,
-                "entry": entry_price,
-                "SL": sl,
-                "TP": tp,
-                "pnl": pnl,
-                "capital": capital
-            })
+            if position is None and ia_signal in ["BUY", "SELL"]:
+                position = "LONG" if ia_signal == "BUY" else "SHORT"
+                entry_price = price
+            elif position == "LONG":
+                if price <= sl or price >= tp:
+                    pnl = (price - entry_price)
+                    capital += pnl
+                    trades += 1
+                    if pnl > 0:
+                        wins += 1
+                        gross_profit += pnl
+                    else:
+                        losses += 1
+                        gross_loss += abs(pnl)
+                    position = None
+            elif position == "SHORT":
+                if price >= sl or price <= tp:
+                    pnl = (entry_price - price)
+                    capital += pnl
+                    trades += 1
+                    if pnl > 0:
+                        wins += 1
+                        gross_profit += pnl
+                    else:
+                        losses += 1
+                        gross_loss += abs(pnl)
+                    position = None
 
-        equity_curve.append(capital)
+            equity_curve.append(capital)
 
-    df_equity = pd.DataFrame({"capital": equity_curve}, index=df.index[:len(equity_curve)])
-    df_equity.to_csv(f"equity_curve_{sym}_conservative.csv")
+        accuracy = (wins / trades * 100) if trades > 0 else 0
+        final_capital = capital
+        drawdown = compute_drawdown(equity_curve)
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else np.inf
+        sharpe_ratio = (
+            (np.mean(np.diff(equity_curve)) / np.std(np.diff(equity_curve))) * np.sqrt(252)
+            if len(equity_curve) > 1 and np.std(np.diff(equity_curve)) != 0
+            else 0
+        )
 
-    plt.figure(figsize=(10,5))
-    plt.plot(df_equity.index, df_equity["capital"], label=f"Equity {sym}")
-    plt.title(f"Equity Curve {sym} (1 año, conservadora)")
-    plt.xlabel("Fecha")
-    plt.ylabel("Capital")
-    plt.legend()
-    plt.savefig(f"equity_curve_{sym}_conservative.png")
-    plt.close()
+        results.append({
+            "symbol": sym,
+            "capital_final": final_capital,
+            "trades": trades,
+            "accuracy": accuracy,
+            "profit_factor": profit_factor,
+            "drawdown": drawdown,
+            "sharpe_ratio": sharpe_ratio,
+            "UP": up_thr,
+            "DOWN": down_thr
+        })
 
-    print(f"Capital final {sym}: ${capital:.2f}")
+    return pd.DataFrame(results)
 
-# ---------------- REPORTE FINAL ----------------
-df_res = pd.DataFrame(results)
-df_res.to_csv("backtest_results_1y_professional_model_conservative.csv", index=False)
-print("\n✅ Backtest anual (versión conservadora) completado.")
-print("Archivo: backtest_results_1y_professional_model_conservative.csv")
+
+# ---------------- OPTIMIZADOR ----------------
+def optimizar_umbral(client, model, feature_cols):
+    mejores = []
+    for up_thr, down_thr in product(np.arange(0.45, 0.56, 0.02), np.arange(0.45, 0.56, 0.02)):
+        df_results = ejecutar_backtest(client, model, feature_cols, up_thr, down_thr)
+        avg_pf = df_results["profit_factor"].replace(np.inf, 10).mean()
+        avg_sharpe = df_results["sharpe_ratio"].mean()
+        score = avg_pf * 0.7 + avg_sharpe * 0.3
+        mejores.append((up_thr, down_thr, avg_pf, avg_sharpe, score))
+        logging.info(f"Evaluado (UP={up_thr:.2f}, DOWN={down_thr:.2f}) → PF={avg_pf:.2f}, Sharpe={avg_sharpe:.2f}")
+
+    best = max(mejores, key=lambda x: x[4])
+    logging.info(f"\n🏆 Mejor combinación: UP={best[0]:.2f} | DOWN={best[1]:.2f} | PF={best[2]:.2f} | Sharpe={best[3]:.2f}")
+
+    df_best = ejecutar_backtest(client, model, feature_cols, best[0], best[1])
+    df_best.to_csv("backtest_results_optim.csv", index=False)
+    logging.info("✅ Backtest óptimo guardado en 'backtest_results_optim.csv'.")
+
+
+# ---------------- MAIN ----------------
+if __name__ == "__main__":
+    client = init_client(API_KEY, API_SECRET)
+
+    logging.info("Cargando modelo IA...")
+    model_dict = joblib.load(MODEL_FILE)
+    model = model_dict["model"]
+    feature_cols = model_dict["features"]
+    logging.info(f"✅ Modelo cargado con {len(feature_cols)} features y clases: {model.classes_}")
+
+    diagnostico_modelo(client, model, feature_cols, SYMBOLS)
+
+    logging.info("\n🚀 Iniciando optimización automática de umbrales...")
+    optimizar_umbral(client, model, feature_cols)

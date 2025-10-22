@@ -1,7 +1,0 @@
-symbol,capital_final,total_trades,win_rate,avg_win,avg_loss,max_drawdown,sharpe_ratio
-BTCUSDT,10000.0,2,0.0,0,0.0,0.0,0.0
-ETHUSDT,10000.0,7,0.0,0,0.0,0.0,0.0
-BNBUSDT,10000.0,7,0.0,0,0.0,0.0,0.0
-SOLUSDT,10000.0,2,0.0,0,0.0,0.0,0.0
-ADAUSDT,10000.0,6,0.0,0,0.0,0.0,0.0
-DOGEUSDT,10000.0,1,0.0,0,0.0,0.0,0.0

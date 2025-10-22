@@ -1,0 +1,26 @@
+{
+  "BTCUSDT": {
+    "signal": "SELL",
+    "prob": 0.7818130940971383
+  },
+  "ETHUSDT": {
+    "signal": "HOLD",
+    "prob": 0.6706678859453623
+  },
+  "BNBUSDT": {
+    "signal": "HOLD",
+    "prob": 0.5649868673728828
+  },
+  "SOLUSDT": {
+    "signal": "SELL",
+    "prob": 0.6956550854291333
+  },
+  "ADAUSDT": {
+    "signal": "SELL",
+    "prob": 0.7630329484008488
+  },
+  "DOGEUSDT": {
+    "signal": "SELL",
+    "prob": 0.7774426928637729
+  }
+}
