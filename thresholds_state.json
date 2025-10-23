@@ -1,1 +1,216 @@
-{"UP_THRESHOLD": 0.7, "DOWN_THRESHOLD": 0.7}
+{
+  "UP_THRESHOLD": 0.7,
+  "DOWN_THRESHOLD": 0.7,
+  "history": [
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.231144"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.233141"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.235133"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.237130"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.240086"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.242111"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.245075"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.247068"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.249064"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.251058"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.254050"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.257037"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.260029"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.263055"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.266041"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.269039"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.272994"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.277987"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.280978"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.284997"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.287993"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.291943"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.294933"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.297924"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.300916"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.303909"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.307904"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.310894"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": true,
+      "timestamp": "2025-10-23T00:05:36.313886"
+    },
+    {
+      "symbol": "BTCUSDT",
+      "signal": "COMPRA CONFIRMADA \u2705",
+      "prob": 0.65,
+      "win": false,
+      "timestamp": "2025-10-23T00:05:36.315879"
+    }
+  ]
+}
