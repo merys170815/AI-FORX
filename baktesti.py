@@ -1,11 +1,17 @@
+# ===============================
+# 📊 Backtest Diario + Optimización de Umbrales (Full Features) + Progreso
+# ===============================
+
 import os
 import joblib
 import pandas as pd
 import numpy as np
 import ta
+import schedule
+import time
+import logging
 from binance.client import Client
 from datetime import datetime
-import logging
 from itertools import product
 
 # ---------------- CONFIG ----------------
@@ -21,7 +27,6 @@ CAPITAL_INICIAL = 10000
 # ---------------- LOGGING ----------------
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
-
 # ---------------- FUNCIONES BASE ----------------
 def init_client(api_key, api_secret):
     client = Client(api_key, api_secret)
@@ -32,8 +37,7 @@ def init_client(api_key, api_secret):
         logging.warning(f"⚠️ No se pudo validar conexión con Binance: {e}")
     return client
 
-
-def download_klines_safe(client, sym, interval, limit):
+def download_klines_safe(client, sym, interval=INTERVAL, limit=HISTORICAL_LIMIT):
     try:
         kl = client.futures_klines(symbol=sym, interval=interval, limit=limit)
         df = pd.DataFrame(kl, columns=[
@@ -51,83 +55,66 @@ def download_klines_safe(client, sym, interval, limit):
         logging.error(f"Error descargando datos de {sym}: {e}")
         return pd.DataFrame()
 
+# ---------------- FEATURES ----------------
+def compute_indicators(df):
+    try:
+        df["rsi14"] = ta.momentum.RSIIndicator(df["Close"], window=14).rsi()
+        df["atr14"] = ta.volatility.AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range()
+        bb = ta.volatility.BollingerBands(df["Close"])
+        df["bb_pct"] = (df["Close"] - bb.bollinger_lband()) / (bb.bollinger_hband() - bb.bollinger_lband())
+        macd = ta.trend.MACD(df["Close"])
+        df["macd"] = macd.macd()
+        df["macd_signal"] = macd.macd_signal()
+        stoch = ta.momentum.StochasticOscillator(df["High"], df["Low"], df["Close"])
+        df["stoch_k"] = stoch.stoch()
+        df["stoch_d"] = stoch.stoch_signal()
+        df["vpt"] = ta.volume.VolumePriceTrendIndicator(df["Close"], df["Volume"]).volume_price_trend()
+        df["momentum"] = df["Close"].diff()
+        df["logret"] = np.log(df["Close"] / df["Close"].shift(1))
+        df["bb_width"] = df["High"] - df["Low"]
+        df["ama_cross"] = np.sign(df["Close"].diff())
+        return df
+    except Exception as e:
+        logging.error(f"Error calculando indicadores: {e}")
+        return pd.DataFrame()
 
-def ichimoku(df):
-    high, low, close = df['High'], df['Low'], df['Close']
-    ich = ta.trend.IchimokuIndicator(high=high, low=low, window1=9, window2=26, window3=52)
-    return ich.ichimoku_conversion_line(), ich.ichimoku_base_line(), ich.ichimoku_a(), ich.ichimoku_b(), close.shift(-26)
+def add_lag_features(df, col, lags=3):
+    for i in range(1, lags + 1):
+        df[f"{col}_lag{i}"] = df[col].shift(i)
+    return df
 
+def build_features(df, sym, feature_cols):
+    df = compute_indicators(df)
+    if df.empty:
+        return df
 
-def compute_rsi(close, period=14):
-    return ta.momentum.RSIIndicator(close, window=period).rsi()
+    for col in ["atr14", "bb_pct", "rsi14", "stoch_k", "stoch_d",
+                "macd", "macd_signal", "vpt", "ama_cross", "momentum", "logret"]:
+        if col in df.columns:
+            df = add_lag_features(df, col, lags=3)
 
+    for s in SYMBOLS:
+        df[f"sym_{s}"] = 1 if s == sym else 0
 
-def compute_atr(df, window=14):
-    return ta.volatility.AverageTrueRange(df['High'], df['Low'], df['Close'], window=window).average_true_range()
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = 0.0
 
-
-def compute_drawdown(equity_curve):
-    equity_curve = np.array(equity_curve)
-    peak = np.maximum.accumulate(equity_curve)
-    drawdown = (equity_curve - peak) / peak
-    return abs(drawdown.min())
-
-
-# ---------------- DIAGNÓSTICO ----------------
-def diagnostico_modelo(client, model, feature_cols, symbols):
-    logging.info("\n🔍 Diagnóstico del modelo IA...")
-    for sym in symbols:
-        df = download_klines_safe(client, sym, INTERVAL, 300)
-        if df.empty:
-            continue
-
-        tenkan, kijun, senkou_a, senkou_b, chikou = ichimoku(df)
-        df["tenkan"] = tenkan
-        df["kijun"] = kijun
-        df["senkou_a"] = senkou_a
-        df["senkou_b"] = senkou_b
-        df["chikou"] = chikou
-        df["rsi"] = compute_rsi(df['Close'])
-        df["atr"] = compute_atr(df)
-        df.dropna(inplace=True)
-
-        for c in feature_cols:
-            if c not in df.columns:
-                df[c] = 0.0
-        df.ffill().bfill(inplace=True)
-
-        X = df[feature_cols].iloc[[-1]]
-        probs = model.predict_proba(X)[0]
-        prob_down, prob_neutral, prob_up = probs
-        logging.info(f"📈 {sym}: ↓ {prob_down:.2f} | → {prob_neutral:.2f} | ↑ {prob_up:.2f}")
-
+    df = df.ffill().bfill().dropna()
+    return df
 
 # ---------------- BACKTEST ----------------
 def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
     results = []
+    total_symbols = len(SYMBOLS)
 
-    for sym in SYMBOLS:
-        logging.info(f"\n📊 Backtesting {sym} (UP={up_thr}, DOWN={down_thr})...")
-
-        df = download_klines_safe(client, sym, INTERVAL, HISTORICAL_LIMIT)
+    for idx, sym in enumerate(SYMBOLS, 1):
+        logging.info(f"\n⏳ [{idx}/{total_symbols}] Iniciando backtest para {sym}...")
+        df = download_klines_safe(client, sym)
+        df = build_features(df, sym, feature_cols)
         if df.empty:
+            logging.warning(f"⚠️ {sym}: No hay datos suficientes.")
             continue
-
-        df_feat = df.copy()
-        tenkan, kijun, senkou_a, senkou_b, chikou = ichimoku(df_feat)
-        df_feat["tenkan"] = tenkan
-        df_feat["kijun"] = kijun
-        df_feat["senkou_a"] = senkou_a
-        df_feat["senkou_b"] = senkou_b
-        df_feat["chikou"] = chikou
-        df_feat["rsi"] = compute_rsi(df_feat['Close'])
-        df_feat["atr"] = compute_atr(df_feat)
-        df_feat.dropna(inplace=True)
-
-        for c in feature_cols:
-            if c not in df_feat.columns:
-                df_feat[c] = 0.0
-        df_feat.ffill().bfill(inplace=True)
 
         capital = CAPITAL_INICIAL
         position = None
@@ -136,8 +123,8 @@ def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
         gross_profit = gross_loss = 0
         equity_curve = [capital]
 
-        for i in range(1, len(df_feat)):
-            X = df_feat[feature_cols].iloc[[i]]
+        for i in range(1, len(df)):
+            X = df[feature_cols].iloc[[i]]
             probs = model.predict_proba(X)[0]
             prob_down, prob_neutral, prob_up = probs
 
@@ -146,27 +133,19 @@ def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
             elif prob_down >= down_thr:
                 ia_signal = "SELL"
             else:
-                last_close = df_feat["Close"].iloc[i]
-                prev_close = df_feat["Close"].iloc[i - 1]
+                last_close = df["Close"].iloc[i]
+                prev_close = df["Close"].iloc[i - 1]
                 ia_signal = "BUY" if last_close > prev_close else ("SELL" if last_close < prev_close else "HOLD")
 
-            price = df_feat["Close"].iloc[i]
-            atr = df_feat["atr"].iloc[i]
+            price = df["Close"].iloc[i]
+            atr = df["atr14"].iloc[i]
 
-            # Dinámica de SL/TP según volatilidad reciente
             atr_ratio = atr / price
             sl_mult = 1.5 + (atr_ratio * 100)
-            tp_mult = 2.2 - (atr_ratio * 50)
-            tp_mult = max(1.2, tp_mult)
+            tp_mult = max(1.2, 2.2 - (atr_ratio * 50))
 
-            if ia_signal == "BUY":
-                sl = price - sl_mult * atr
-                tp = price + tp_mult * atr
-            elif ia_signal == "SELL":
-                sl = price + sl_mult * atr
-                tp = price - tp_mult * atr
-            else:
-                continue
+            sl = price - sl_mult * atr if ia_signal == "BUY" else price + sl_mult * atr
+            tp = price + tp_mult * atr if ia_signal == "BUY" else price - tp_mult * atr
 
             if position is None and ia_signal in ["BUY", "SELL"]:
                 position = "LONG" if ia_signal == "BUY" else "SHORT"
@@ -200,13 +179,15 @@ def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
 
         accuracy = (wins / trades * 100) if trades > 0 else 0
         final_capital = capital
-        drawdown = compute_drawdown(equity_curve)
+        drawdown = abs((np.array(equity_curve) - np.maximum.accumulate(equity_curve)) / np.maximum.accumulate(equity_curve)).max()
         profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else np.inf
         sharpe_ratio = (
             (np.mean(np.diff(equity_curve)) / np.std(np.diff(equity_curve))) * np.sqrt(252)
             if len(equity_curve) > 1 and np.std(np.diff(equity_curve)) != 0
             else 0
         )
+
+        logging.info(f"✔ {sym} — Trades: {trades} | Wins: {wins} | Losses: {losses} | PF: {profit_factor:.2f} | Capital final: {capital:.2f}")
 
         results.append({
             "symbol": sym,
@@ -220,39 +201,54 @@ def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
             "DOWN": down_thr
         })
 
-    return pd.DataFrame(results)
+    df_results = pd.DataFrame(results)
+    if not df_results.empty:
+        logging.info("\n📊 ================== RESUMEN FINAL ==================")
+        logging.info(f"\n{df_results[['symbol','trades','accuracy','profit_factor','capital_final','sharpe_ratio']]}")
+        logging.info("======================================================\n")
+    return df_results
 
-
-# ---------------- OPTIMIZADOR ----------------
+# ---------------- OPTIMIZADOR DE UMBRALES ----------------
 def optimizar_umbral(client, model, feature_cols):
     mejores = []
-    for up_thr, down_thr in product(np.arange(0.45, 0.56, 0.02), np.arange(0.45, 0.56, 0.02)):
-        df_results = ejecutar_backtest(client, model, feature_cols, up_thr, down_thr)
-        avg_pf = df_results["profit_factor"].replace(np.inf, 10).mean()
-        avg_sharpe = df_results["sharpe_ratio"].mean()
-        score = avg_pf * 0.7 + avg_sharpe * 0.3
-        mejores.append((up_thr, down_thr, avg_pf, avg_sharpe, score))
-        logging.info(f"Evaluado (UP={up_thr:.2f}, DOWN={down_thr:.2f}) → PF={avg_pf:.2f}, Sharpe={avg_sharpe:.2f}")
+    for up_thr in np.arange(0.30, 0.61, 0.02):
+        for down_thr in np.arange(0.30, 0.61, 0.02):
+            df_results = ejecutar_backtest(client, model, feature_cols, up_thr, down_thr)
+            if df_results.empty:
+                continue
+            avg_pf = df_results["profit_factor"].replace(np.inf, 10).mean()
+            avg_sharpe = df_results["sharpe_ratio"].mean()
+            score = avg_pf * 0.7 + avg_sharpe * 0.3
+            mejores.append((up_thr, down_thr, avg_pf, avg_sharpe, score))
+
+    if not mejores:
+        logging.warning("⚠️ No se pudo optimizar umbrales.")
+        return
 
     best = max(mejores, key=lambda x: x[4])
-    logging.info(f"\n🏆 Mejor combinación: UP={best[0]:.2f} | DOWN={best[1]:.2f} | PF={best[2]:.2f} | Sharpe={best[3]:.2f}")
-
+    logging.info(f"🏆 Mejor combinación: UP={best[0]:.2f} | DOWN={best[1]:.2f} | PF={best[2]:.2f} | Sharpe={best[3]:.2f}")
     df_best = ejecutar_backtest(client, model, feature_cols, best[0], best[1])
     df_best.to_csv("backtest_results_optim.csv", index=False)
     logging.info("✅ Backtest óptimo guardado en 'backtest_results_optim.csv'.")
 
-
-# ---------------- MAIN ----------------
-if __name__ == "__main__":
+# ---------------- JOB DIARIO ----------------
+def job_diario():
+    logging.info("⏰ Ejecutando backtest diario...")
     client = init_client(API_KEY, API_SECRET)
-
-    logging.info("Cargando modelo IA...")
     model_dict = joblib.load(MODEL_FILE)
     model = model_dict["model"]
     feature_cols = model_dict["features"]
-    logging.info(f"✅ Modelo cargado con {len(feature_cols)} features y clases: {model.classes_}")
-
-    diagnostico_modelo(client, model, feature_cols, SYMBOLS)
-
-    logging.info("\n🚀 Iniciando optimización automática de umbrales...")
     optimizar_umbral(client, model, feature_cols)
+
+# ---------------- MAIN ----------------
+
+
+if __name__ == "__main__":
+    logging.info("🚀 Sistema de backtest automático inicializado.")
+    job_diario()  # ejecutar al iniciar
+    schedule.every().day.at("00:00").do(job_diario)  # ejecutar cada día a medianoche
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
