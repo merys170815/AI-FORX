@@ -1,0 +1,81 @@
+name: Daily Backtest & Threshold Refresh
+
+on:
+  schedule:
+    # Ejecuta todos los días a las 06:05 UTC (ajusta a tu preferencia)
+    - cron: "5 6 * * *"
+  workflow_dispatch: {}   # Permite lanzarlo manualmente desde la UI
+
+permissions:
+  contents: write   # Para poder hacer commit/push con GITHUB_TOKEN
+
+jobs:
+  run-backtest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run backtest.py
+        run: |
+          echo "▶️ Ejecutando backtest.py"
+          python backtest.py
+        env:
+          # Si tu backtest.py necesita variables (claves de APIs, etc.), añade:
+          # API_KEY: ${{ secrets.API_KEY }}
+          # API_SECRET: ${{ secrets.API_SECRET }}
+          # ...y úsalas dentro del script.
+          PYTHONUNBUFFERED: "1"
+
+      - name: Check if CSV changed
+        id: gitcheck
+        run: |
+          if git status --porcelain | grep -E "backtest_results_optim\.csv"; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit & Push CSV changes
+        if: steps.gitcheck.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add backtest_results_optim.csv
+          git commit -m "chore(backtest): update backtest_results_optim.csv [skip ci]"
+          git push
+
+      - name: Upload artifact (backup del CSV)
+        if: steps.gitcheck.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest_results_optim
+          path: backtest_results_optim.csv
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Notify Flask to reload thresholds
+        if: steps.gitcheck.outputs.changed == 'true'
+        run: |
+          echo "🔔 Notificando a la app para recargar umbrales..."
+          if [ -n "${APP_RELOAD_AUTH}" ]; then
+            curl -sS -X POST "${APP_RELOAD_URL}" -H "Authorization: Bearer ${APP_RELOAD_AUTH}"
+          else
+            curl -sS -X POST "${APP_RELOAD_URL}"
+          fi
+        env:
+          APP_RELOAD_URL: ${{ secrets.APP_RELOAD_URL }}
+          APP_RELOAD_AUTH: ${{ secrets.APP_RELOAD_AUTH }}

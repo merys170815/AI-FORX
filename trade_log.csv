@@ -1,0 +1,2 @@
+timestamp,symbol,signal,entry_price,exit_price,pnl_usd,pnl_pct,prob_up,prob_down,type,narrative
+2025-10-24T14:49:37,ETHUSDT,COMPRA CONFIRMADA ✅,3500.25,3520.8,2.055,0.59,82.5,17.5,COMPRA CONFIRMADA ✅,Ruptura de resistencia con volumen alto.

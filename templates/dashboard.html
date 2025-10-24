@@ -42,7 +42,7 @@
   #explanation-block ul { padding-left: 20px; margin: 0; }
   #explanation-block li { margin: 4px 0; color: var(--muted); }
 
-  /* 📝 Bloque narrativa destacado */
+  /* 📝 Bloque narrativa */
   .narrative-block {
     margin-top: 15px;
     padding: 15px;
@@ -72,13 +72,18 @@
 
   <header>
     <h1>🚀 Trading IA Pro Dashboard</h1>
-    <p class="subtitle">IA + Estrategia Híbrida (FIB/ATR) + Explicabilidad + Noticias + Soportes + Patrones</p>
+    <p class="subtitle">IA + Estrategia Híbrida + Explicabilidad + TP/SL + Paper Trading</p>
     <div class="search">
       <input id="symbol-input" type="text" placeholder="Ej: BTCUSDT" />
       <button onclick="consultarSimbolo()">Analizar</button>
       <button onclick="cargarScanner()">Escanear 🔎</button>
     </div>
   </header>
+
+  <!-- 📊 Paper Trading Stats -->
+  <div id="paper-stats" style="text-align:center;margin-top:15px;color:#58a6ff;font-size:16px;">
+    💰 Balance: $0 | 📊 Trades: 0 | 🏆 Winrate: 0%
+  </div>
 
   <main>
     <section id="respuesta-consulta"></section>
@@ -216,9 +221,11 @@ async function consultarSimbolo() {
       <p>🔼 Prob ↑: ${data.prob_up}% | 🔽 Prob ↓: ${data.prob_down}%</p>
       <p>💰 Precio actual: ${fmt(data.price)}</p>
     `;
+
     if (data.entry_suggest) html += `<p>🎯 Entrada: ${fmt(data.entry_suggest)}</p>`;
     if (data.SL) html += `<p>🛑 Stop Loss: ${fmt(data.SL)}</p>`;
     if (data.TP) html += `<p>🏁 Take Profit: ${fmt(data.TP)}</p>`;
+    if (data.technical_message) html += `<p>📢 ${escapeHTML(data.technical_message)}</p>`;
 
     if (data.risk_rr) {
       const rrClass = data.risk_rr >= 2 ? "rr-high" : data.risk_rr >= 1 ? "rr-medium" : "rr-low";
@@ -227,7 +234,6 @@ async function consultarSimbolo() {
 
     if (data.plan) html += `<p>🧭 Plan de Trade: ${data.plan}</p>`;
 
-    // 📝 Bloque narrativa + soporte/resistencia/patrón
     if (data.narrative || data.support || data.resistance || data.candle_pattern) {
       html += `
         <div class="narrative-block">
@@ -242,30 +248,25 @@ async function consultarSimbolo() {
       `;
     }
 
-    // 🧠 Explicabilidad
-    if (data.explanation) {
-      html += `<div id="explanation-block"><h3>🧠 Explicabilidad</h3>`;
-      if (data.explanation.top_importances?.length) {
-        html += `<p><b>📊 Importancia Global:</b></p><ul>`;
-        data.explanation.top_importances.forEach(([f, v]) => { html += `<li>${escapeHTML(f)} → ${v}</li>`; });
-        html += `</ul>`;
-      }
-      if (data.explanation.shap_top?.length) {
-        html += `<p><b>🔍 Impacto Local (SHAP):</b></p><ul>`;
-        data.explanation.shap_top.forEach(([f, v]) => { html += `<li>${escapeHTML(f)} → ${v}</li>`; });
-        html += `</ul>`;
-      } else {
-        html += `<p style="color:var(--muted)">ℹ️ SHAP no disponible para esta predicción.</p>`;
-      }
-      html += `</div>`;
-    }
-
     box.innerHTML = html;
     renderChart(data);
-
   } catch (err) {
     box.className = "alert-news";
     box.innerHTML = `❌ Error: ${escapeHTML(err.message)}`;
+  }
+}
+
+// ==================== 📢 Paper Trading Stats ====================
+async function cargarPaperStats() {
+  try {
+    const res = await fetch("/api/paper_stats");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    document.getElementById("paper-stats").innerHTML = `
+      💰 Balance: $${data.balance} | 📊 Trades: ${data.total_trades} | ✅ ${data.wins} / ❌ ${data.losses} | 🏆 Winrate: ${data.winrate}%
+    `;
+  } catch (err) {
+    document.getElementById("paper-stats").innerText = "❌ Error cargando paper trading";
   }
 }
 
@@ -288,9 +289,13 @@ function renderChart(data) {
 window.addEventListener("load", () => {
   cargarScanner();
   cargarStats();
+  cargarPaperStats();
+  setInterval(cargarPaperStats, 5000);
   if (Notification.permission !== "granted") Notification.requestPermission();
 });
 </script>
 </body>
 </html>
+
+
 

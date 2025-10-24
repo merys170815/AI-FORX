@@ -19,6 +19,10 @@ from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from typing import Dict, Any, Tuple, List, Optional
 from math import isnan
+from logger_trades import log_trade
+from trade_engine import open_trade
+from trade_engine import get_stats
+
 
 app = Flask(__name__)
 
@@ -1003,7 +1007,65 @@ def get_class_index(classes, value):
     if alt_val in classes:
         return classes.index(alt_val)
     raise ValueError(f"Clase {value} no encontrada en modelo (clases={classes})")
+def simulate_scenarios(symbol: str, X_row: pd.Series, model, classes, idx_up, idx_down):
+    """
+    Simula escenarios modificando features claves para ver si la señal se mantiene.
+    Retorna cuántos escenarios confirman la dirección.
+    """
+    scenarios = []
 
+    # Base: escenario actual
+    scenarios.append(X_row.copy())
+
+    # Escenario 1: volatilidad alta
+    s1 = X_row.copy()
+    s1["atr14"] *= 1.5
+    scenarios.append(s1)
+
+    # Escenario 2: volatilidad baja
+    s2 = X_row.copy()
+    s2["atr14"] *= 0.7
+    scenarios.append(s2)
+
+    # Escenario 3: spike alcista
+    s3 = X_row.copy()
+    s3["momentum"] *= 1.8
+    s3["rsi14"] = min(90, s3["rsi14"] + 10)
+    scenarios.append(s3)
+
+    # Escenario 4: spike bajista
+    s4 = X_row.copy()
+    s4["momentum"] *= -1.8
+    s4["rsi14"] = max(10, s4["rsi14"] - 10)
+    scenarios.append(s4)
+
+    # Escenario 5: lateral fuerte (momentum bajo)
+    s5 = X_row.copy()
+    s5["momentum"] = 0
+    s5["rsi14"] = 50
+    scenarios.append(s5)
+
+    confirmations_up = 0
+    confirmations_down = 0
+
+    for sc in scenarios:
+        proba = model.predict_proba(sc.values.reshape(1, -1))[0]
+        p_up = proba[idx_up]
+        p_down = proba[idx_down]
+
+        if p_up > p_down:
+            confirmations_up += 1
+        elif p_down > p_up:
+            confirmations_down += 1
+
+    total = len(scenarios)
+    return {
+        "total": total,
+        "up_votes": confirmations_up,
+        "down_votes": confirmations_down,
+        "confidence_up": confirmations_up / total,
+        "confidence_down": confirmations_down / total
+    }
 # ---------------- Core de señal ----------------
 def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use_kelly: bool = False) -> Dict[str, Any]:
     df = download_klines_safe(symbol)
@@ -1053,6 +1115,8 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     # 🧭 Soportes y resistencias
     soporte, resistencia = detect_swing_range(df_feat)
     margen_atr = df_feat["atr"].iloc[-1] if "atr" in df_feat.columns else None
+    tech_message = None  # 👈 variable para mensaje técnico
+
     if soporte and resistencia and margen_atr and not np.isnan(margen_atr):
         dist_a_soporte = abs(price_now - soporte)
         dist_a_resistencia = abs(price_now - resistencia)
@@ -1063,7 +1127,8 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
             logging.info(f"🧭 Cerca de RESISTENCIA ({resistencia:.2f}) → refuerza VENTA")
         else:
             # 🛡️ Estrategia conservadora: si no está cerca de zonas clave, no entrar
-            logging.info(f"🧭 Precio lejos de zonas técnicas → señal debilitada")
+            tech_message = "🧭 Precio lejos de zonas técnicas → señal debilitada"
+            logging.info(tech_message)
             signal = "ESPERAR"
 
     # 📊 Confirmación técnica (ADX + EMAs)
@@ -1072,6 +1137,31 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     ema50 = float(df_feat.get("ema_50", df_feat.get("ema50", np.nan)).iloc[-1])
     confirm = (signal == "COMPRAR" and adx_val > 20 and ema20 > ema50) or \
               (signal == "VENTA" and adx_val > 20 and ema20 < ema50)
+
+    # 🧠 Auto-What-If Engine (simulación de escenarios)
+    if signal in ["COMPRAR", "VENTA"]:
+        X_row = X_all.iloc[-1]
+        whatif_result = simulate_scenarios(symbol, X_row, model, classes, idx_up, idx_down)
+
+        min_confidence = 0.8
+        if signal == "COMPRAR" and whatif_result["confidence_up"] < min_confidence:
+            return {
+                "symbol": symbol,
+                "signal": "ESPERAR 🧠",
+                "message": f"❌ Señal descartada por motor What-If (solo {whatif_result['up_votes']}/{whatif_result['total']} escenarios favorables)",
+                "prob_up": prob_up * 100,
+                "prob_down": prob_down * 100,
+                "technical_message": tech_message
+            }
+        elif signal == "VENTA" and whatif_result["confidence_down"] < min_confidence:
+            return {
+                "symbol": symbol,
+                "signal": "ESPERAR 🧠",
+                "message": f"❌ Señal descartada por motor What-If (solo {whatif_result['down_votes']}/{whatif_result['total']} escenarios favorables)",
+                "prob_up": prob_up * 100,
+                "prob_down": prob_down * 100,
+                "technical_message": tech_message
+            }
 
     # 🟡 Construir respuesta si no hay señal
     if signal == "COMPRAR":
@@ -1085,6 +1175,7 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
             "signal": "ESPERAR 🧠" if not news else "ESPERAR 🚨",
             "message": msg,
             "price": round(price_now, 4),
+            "technical_message": tech_message,
             "prob_up": None,
             "prob_down": None,
             "entry_suggest": None,
@@ -1106,14 +1197,12 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     X_row = X_all.iloc[-1]
     dominant_class_idx = idx_up if prob_up >= prob_down else idx_down
     explanation = build_local_explanation(X_row, class_idx=dominant_class_idx, top_n=5)
-
     narrativa = market_context_narrative(symbol, df_feat, signal_out, prob_up * 100, prob_down * 100)
 
     # 💰 Sizing sugerido
     entry = trade_plan.get("entry_suggest")
     sl = trade_plan.get("SL")
     rr = trade_plan.get("risk_rr")
-
     sizing = None
     if entry and sl:
         if use_kelly:
@@ -1144,9 +1233,48 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
         "thresholds_used": th,
         "candle_pattern": patron,
         "support": round(soporte, 4) if soporte else None,
-        "resistance": round(resistencia, 4) if resistencia else None
+        "resistance": round(resistencia, 4) if resistencia else None,
+        "technical_message": tech_message  # 👈 mensaje agregado a la respuesta final
     }
+
+    # 📝 Registrar trade automáticamente si hay señal de entrada
+    if signal_out in ["COMPRA CONFIRMADA ✅", "COMPRA POTENCIAL ⚠️", "VENTA CONFIRMADA ✅", "VENTA POTENCIAL ⚠️"]:
+        try:
+            entry_price = trade_plan.get("entry_suggest") or price_now
+            exit_price = entry_price  # inicial, luego se actualiza al cerrar
+            pnl_usd = 0.0
+            pnl_pct = 0.0
+
+            log_trade(
+                symbol,
+                signal_out,
+                entry_price,
+                exit_price,
+                pnl_usd,
+                pnl_pct,
+                prob_up * 100,
+                prob_down * 100,
+                signal_out,
+                narrativa
+            )
+            logging.info(f"📝 Trade registrado en log: {symbol} - {signal_out} @ {entry_price}")
+        except Exception as e:
+            logging.error(f"❌ Error al registrar trade en log: {e}")
+
+
+    # 📝 Registrar trade y abrir simulación
+    if signal_out in ["COMPRA CONFIRMADA ✅", "VENTA CONFIRMADA ✅"]:
+        try:
+            entry_price = trade_plan.get("entry_suggest") or price_now
+            sl = trade_plan.get("SL")
+            tp = trade_plan.get("TP")
+            if sl and tp:
+                open_trade(symbol, signal_out, entry_price, sl, tp, size_usd=100)  # tamaño base de operación
+        except Exception as e:
+            logging.error(f"❌ Error al abrir trade simulado: {e}")
+
     return resp
+
 
 # ---------------- Backtest ----------------
 def simulate_trade(row_entry_idx, side, entry, sl, tp, df_feat, use_planB: bool) -> Tuple[float, int]:
@@ -1544,6 +1672,15 @@ def get_filters_info():
         "umbrales_activos": mejores_umbral
     }
     return jsonify(response)
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(os.path.join(app.root_path, 'static'),
+                               'favicon.ico', mimetype='image/vnd.microsoft.icon')
+@app.route("/api/paper_stats")
+def paper_stats():
+    stats = get_stats()
+    return jsonify(stats)
+
 
 # ===================================================
 # 🚀 MAIN
