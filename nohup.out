@@ -1,0 +1,385 @@
+2025-10-24 02:14:00,972 [WARNING] ⚠️ Error recalculando thresholds: 'list' object has no attribute 'values'
+2025-10-24 03:14:00,980 [WARNING] ⚠️ Error recalculando thresholds: 'list' object has no attribute 'values'
+2025-10-24 03:26:52,759 [ERROR] 206.168.34.211 - - [24/Oct/2025 03:26:52] code 400, message Bad request version ("¥N'")
+2025-10-24 03:26:52,763 [INFO] 206.168.34.211 - - [24/Oct/2025 03:26:52] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03òºb\x8eÕ³\x09\x9dÂÎj\x1d»\x1f¥N'[0m" 400 -
+2025-10-24 03:26:56,298 [INFO] 206.168.34.211 - - [24/Oct/2025 03:26:56] "GET / HTTP/1.1" 200 -
+2025-10-24 03:27:04,324 [ERROR] 206.168.34.211 - - [24/Oct/2025 03:27:04] code 400, message Bad request version ('À\x14À')
+2025-10-24 03:27:04,325 [INFO] 206.168.34.211 - - [24/Oct/2025 03:27:04] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03\x10\x92IR\x1e\x89^\x97ëQÔ`0Íe"­\x0bajç\x9d3\x96j\x13\x11h\x0c/\x08] \\\x7f\x99U³ð\x88á7\x8f~Å1n\x07çæ\x99|\x9b5Å8\x1bqÜ1\x9e\x90ßS\x16\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+2025-10-24 03:27:09,603 [INFO] 206.168.34.211 - - [24/Oct/2025 03:27:09] "GET / HTTP/1.1" 200 -
+2025-10-24 03:27:11,241 [ERROR] 206.168.34.211 - - [24/Oct/2025 03:27:11] code 505, message Invalid HTTP version (2.0)
+2025-10-24 03:27:11,242 [INFO] 206.168.34.211 - - [24/Oct/2025 03:27:11] "[35m[1mPRI * HTTP/2.0[0m" 505 -
+2025-10-24 03:27:13,327 [INFO] 206.168.34.211 - - [24/Oct/2025 03:27:13] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-10-24 03:27:18,604 [ERROR] 206.168.34.211 - - [24/Oct/2025 03:27:18] code 400, message Bad request version ('À\x14À')
+2025-10-24 03:27:18,604 [INFO] 206.168.34.211 - - [24/Oct/2025 03:27:18] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03Ü\x8b;\x1d%h{6Ï\x89$ûÙ·Åa\x05â©oóÎ\x8f\x90ôß\x94\x1aÅÁ¡ý Ð\x04&NòÂ`Ç\x82Ê±?\x06ÂD$&\x139\x80h\x07\x98ÝnÏÔXøSV¯\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+2025-10-24 03:27:19,254 [INFO] 206.168.34.211 - - [24/Oct/2025 03:27:19] "[33mGET /wiki HTTP/1.1[0m" 404 -
+2025-10-24 03:27:20,249 [INFO] 206.168.34.211 - - [24/Oct/2025 03:27:20] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-10-24 04:14:00,988 [WARNING] ⚠️ Error recalculando thresholds: 'list' object has no attribute 'values'
+2025-10-24 05:14:01,001 [WARNING] ⚠️ Error recalculando thresholds: 'list' object has no attribute 'values'
+2025-10-24 05:43:05,183 [INFO] 205.210.31.70 - - [24/Oct/2025 05:43:05] "GET / HTTP/1.1" 200 -
+2025-10-24 06:14:01,013 [WARNING] ⚠️ Error recalculando thresholds: 'list' object has no attribute 'values'
+2025-10-24 07:14:01,016 [WARNING] ⚠️ Error recalculando thresholds: 'list' object has no attribute 'values'
+2025-10-24 08:14:01,023 [WARNING] ⚠️ Error recalculando thresholds: 'list' object has no attribute 'values'
+2025-10-24 09:14:01,040 [WARNING] ⚠️ Error recalculando thresholds: 'list' object has no attribute 'values'
+2025-10-24 09:43:45,801 [INFO] ✅ Símbolos filtrados — PF ≥ 1.5, Accuracy ≥ 50.0%, Drawdown ≤ 0.2: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:43:45,806 [INFO] 📥 Mejores umbrales cargados (filtrados): {'ETHUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'BNBUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'SOLUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}}
+2025-10-24 09:43:45,807 [INFO] ♻️ [AUTO] Actualizando símbolos y umbrales óptimos...
+2025-10-24 09:43:45,815 [INFO] ✅ Símbolos filtrados: PF≥1.5, Accuracy≥50.0%, DD≤20.0% → ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:43:45,818 [INFO] ✅ Símbolos filtrados — PF ≥ 1.5, Accuracy ≥ 50.0%, Drawdown ≤ 0.2: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:43:45,822 [INFO] ✅ Símbolos filtrados — PF ≥ 1.5, Accuracy ≥ 50.0%, Drawdown ≤ 0.2: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:43:45,824 [INFO] 📥 Mejores umbrales cargados (filtrados): {'ETHUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'BNBUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'SOLUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}}
+2025-10-24 09:43:45,824 [INFO] ✅ [AUTO] Actualización completada — Símbolos: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:43:45,827 [INFO] 📥 Mejores umbrales cargados (filtrados): {'ETHUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'BNBUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'SOLUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}}
+2025-10-24 09:43:48,725 [INFO] ♻️ Modelo cargado/actualizado correctamente (binance_ai_lgbm_optuna_multi_v2_multiclass.pkl)
+2025-10-24 09:43:49,341 [INFO] ✅ WebSocket iniciado para ETHUSDT
+2025-10-24 09:43:49,342 [INFO] ✅ WebSocket iniciado para BNBUSDT
+2025-10-24 09:43:49,342 [INFO] ✅ WebSocket iniciado para SOLUSDT
+2025-10-24 09:43:49,895 [INFO] ✅ Conectado correctamente a Binance Futures.
+ * Tip: There are .env files present. Install python-dotenv to use them.
+ * Serving Flask app 'app'
+ * Debug mode: off
+Address already in use
+Port 5000 is in use by another program. Either identify and stop that program, or start the server with a different port.
+2025-10-24 09:47:32,434 [INFO] ✅ Símbolos filtrados — PF ≥ 1.5, Accuracy ≥ 50.0%, Drawdown ≤ 0.2: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:47:32,437 [INFO] 📥 Mejores umbrales cargados (filtrados): {'ETHUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'BNBUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'SOLUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}}
+2025-10-24 09:47:32,439 [INFO] ♻️ [AUTO] Actualizando símbolos y umbrales óptimos...
+2025-10-24 09:47:32,444 [INFO] ✅ Símbolos filtrados: PF≥1.5, Accuracy≥50.0%, DD≤20.0% → ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:47:32,448 [INFO] ✅ Símbolos filtrados — PF ≥ 1.5, Accuracy ≥ 50.0%, Drawdown ≤ 0.2: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:47:32,453 [INFO] ✅ Símbolos filtrados — PF ≥ 1.5, Accuracy ≥ 50.0%, Drawdown ≤ 0.2: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:47:32,455 [INFO] 📥 Mejores umbrales cargados (filtrados): {'ETHUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'BNBUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'SOLUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}}
+2025-10-24 09:47:32,458 [INFO] 📥 Mejores umbrales cargados (filtrados): {'ETHUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'BNBUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'SOLUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}}
+2025-10-24 09:47:32,459 [INFO] ✅ [AUTO] Actualización completada — Símbolos: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:47:33,771 [INFO] ♻️ Modelo cargado/actualizado correctamente (binance_ai_lgbm_optuna_multi_v2_multiclass.pkl)
+2025-10-24 09:47:34,388 [INFO] ✅ WebSocket iniciado para ETHUSDT
+2025-10-24 09:47:34,389 [INFO] ✅ WebSocket iniciado para BNBUSDT
+2025-10-24 09:47:34,390 [INFO] ✅ WebSocket iniciado para SOLUSDT
+2025-10-24 09:47:34,416 [INFO] ✅ Conectado correctamente a Binance Futures.
+ * Tip: There are .env files present. Install python-dotenv to use them.
+ * Serving Flask app 'app'
+ * Debug mode: off
+2025-10-24 09:47:34,421 [INFO] [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://157.173.119.27:5000
+2025-10-24 09:47:34,421 [INFO] [33mPress CTRL+C to quit[0m
+2025-10-24 09:54:02,943 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 09:54:02,953 [INFO] 191.104.138.21 - - [24/Oct/2025 09:54:02] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-10-24 09:54:03,656 [INFO] 191.104.138.21 - - [24/Oct/2025 09:54:03] "[32mGET / HTTP/1.1[0m" 302 -
+2025-10-24 09:54:03,898 [INFO] 191.104.138.21 - - [24/Oct/2025 09:54:03] "GET /dashboard HTTP/1.1" 200 -
+2025-10-24 09:54:04,472 [INFO] 191.104.138.21 - - [24/Oct/2025 09:54:04] "GET /api/stats HTTP/1.1" 200 -
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 09:54:06,527 [INFO] 🕯 Patrón detectado en ETHUSDT: BEARISH_ENGULFING
+2025-10-24 09:54:06,528 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 09:54:08,189 [INFO] 🕯 Patrón detectado en BNBUSDT: BEARISH_ENGULFING
+2025-10-24 09:54:08,191 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 09:54:09,756 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+2025-10-24 09:54:09,757 [INFO] 191.104.138.21 - - [24/Oct/2025 09:54:09] "GET /api/scanner HTTP/1.1" 200 -
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 09:54:22,378 [INFO] 🕯 Patrón detectado en ETHUSDT: BEARISH_ENGULFING
+2025-10-24 09:54:22,380 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+2025-10-24 09:54:22,381 [INFO] 191.104.138.21 - - [24/Oct/2025 09:54:22] "POST /api/ask HTTP/1.1" 200 -
+2025-10-24 09:55:07,213 [INFO] ✅ Símbolos filtrados — PF ≥ 1.5, Accuracy ≥ 50.0%, Drawdown ≤ 0.2: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:55:07,216 [INFO] 📥 Mejores umbrales cargados (filtrados): {'ETHUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'BNBUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'SOLUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}}
+2025-10-24 09:55:07,217 [INFO] ♻️ [AUTO] Actualizando símbolos y umbrales óptimos...
+2025-10-24 09:55:07,230 [INFO] ✅ Símbolos filtrados — PF ≥ 1.5, Accuracy ≥ 50.0%, Drawdown ≤ 0.2: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:55:07,233 [INFO] 📥 Mejores umbrales cargados (filtrados): {'ETHUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'BNBUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'SOLUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}}
+2025-10-24 09:55:07,233 [INFO] ✅ [AUTO] Actualización completada — Símbolos: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:55:07,251 [INFO] ✅ Símbolos filtrados: PF≥1.5, Accuracy≥50.0%, DD≤20.0% → ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:55:07,255 [INFO] ✅ Símbolos filtrados — PF ≥ 1.5, Accuracy ≥ 50.0%, Drawdown ≤ 0.2: ['ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+2025-10-24 09:55:07,259 [INFO] 📥 Mejores umbrales cargados (filtrados): {'ETHUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'BNBUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}, 'SOLUSDT': {'UP': 0.5000000000000002, 'DOWN': 0.5600000000000003}}
+2025-10-24 09:55:08,760 [INFO] ♻️ Modelo cargado/actualizado correctamente (binance_ai_lgbm_optuna_multi_v2_multiclass.pkl)
+2025-10-24 09:55:09,391 [INFO] ✅ WebSocket iniciado para ETHUSDT
+2025-10-24 09:55:09,399 [INFO] ✅ WebSocket iniciado para BNBUSDT
+2025-10-24 09:55:09,400 [INFO] ✅ WebSocket iniciado para SOLUSDT
+2025-10-24 09:55:09,912 [INFO] ✅ Conectado correctamente a Binance Futures.
+ * Tip: There are .env files present. Install python-dotenv to use them.
+ * Serving Flask app 'app'
+ * Debug mode: off
+Address already in use
+Port 5000 is in use by another program. Either identify and stop that program, or start the server with a different port.
+2025-10-24 09:56:20,098 [INFO] 191.104.138.21 - - [24/Oct/2025 09:56:20] "GET /dashboard HTTP/1.1" 200 -
+2025-10-24 09:56:20,635 [INFO] 191.104.138.21 - - [24/Oct/2025 09:56:20] "GET /api/stats HTTP/1.1" 200 -
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 09:56:22,386 [INFO] 🕯 Patrón detectado en ETHUSDT: BEARISH_ENGULFING
+2025-10-24 09:56:22,387 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 09:56:24,000 [INFO] 🕯 Patrón detectado en BNBUSDT: BEARISH_ENGULFING
+2025-10-24 09:56:24,001 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 09:56:25,888 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+2025-10-24 09:56:25,889 [INFO] 191.104.138.21 - - [24/Oct/2025 09:56:25] "GET /api/scanner HTTP/1.1" 200 -
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 09:56:45,185 [INFO] 🕯 Patrón detectado en ETHUSDT: BEARISH_ENGULFING
+2025-10-24 09:56:45,186 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+2025-10-24 09:56:45,188 [INFO] 191.104.138.21 - - [24/Oct/2025 09:56:45] "POST /api/ask HTTP/1.1" 200 -
+2025-10-24 12:59:23,797 [INFO] 184.105.139.68 - - [24/Oct/2025 12:59:23] "[32mGET / HTTP/1.1[0m" 302 -
+2025-10-24 12:59:32,937 [INFO] 184.105.139.68 - - [24/Oct/2025 12:59:32] "[32mGET / HTTP/1.1[0m" 302 -
+2025-10-24 12:59:33,241 [INFO] 184.105.139.68 - - [24/Oct/2025 12:59:33] "GET /dashboard HTTP/1.1" 200 -
+2025-10-24 12:59:41,665 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 12:59:41,672 [INFO] 184.105.139.68 - - [24/Oct/2025 12:59:41] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-10-24 13:33:44,342 [ERROR] 5.101.64.6 - - [24/Oct/2025 13:33:44] code 400, message Bad request version ('À\x13À')
+2025-10-24 13:33:44,346 [INFO] 5.101.64.6 - - [24/Oct/2025 13:33:44] "[31m[1m\x16\x03\x01\x05¨\x01\x00\x05¤\x03\x03Dr}¹\x8cC\x9ao\x07:`±\x8d\x82²vÔyRíj~o\x8b}¡Ø´\x08\x96¿y ke¸½\x05E\x96Taú÷¼\x8ei\x8bJ=\x13\x17¹s!²~>=)¦G<|\x93\x00\x1aÀ+À/À,À0Ì©Ì¨À\x09À\x13À[0m" 400 -
+2025-10-24 13:33:44,453 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 13:33:44,457 [INFO] 5.101.64.6 - - [24/Oct/2025 13:33:44] "[33mGET /v2/_catalog HTTP/1.1[0m" 404 -
+2025-10-24 13:33:48,138 [ERROR] 5.101.64.6 - - [24/Oct/2025 13:33:48] code 400, message Bad request version ('À\x13À')
+2025-10-24 13:33:48,138 [INFO] 5.101.64.6 - - [24/Oct/2025 13:33:48] "[31m[1m\x16\x03\x01\x05¨\x01\x00\x05¤\x03\x03\x99~ëù\x17\x86\x87\x8b ÑÍ=½ý\x84\x7f\x9b¿Ó\x89\x94\x0c\x85±\x0f\x8c¶S-år_ 8ò_5\x8cY9\x8c?\x80¯®N\x98\x82 \x1b=ê@Q¥ñÐ\x9a\x80¢\x17#\x04Ú\x83\x00\x1aÀ+À/À,À0Ì©Ì¨À\x09À\x13À[0m" 400 -
+2025-10-24 13:33:48,251 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 13:33:48,253 [INFO] 5.101.64.6 - - [24/Oct/2025 13:33:48] "[33mGET /v2/_catalog HTTP/1.1[0m" 404 -
+2025-10-24 15:26:30,662 [ERROR] 118.194.248.4 - - [24/Oct/2025 15:26:30] code 400, message Bad request version ('\x00\x9eÌ¨Ìª\x003\x00=\x00\x16À')
+2025-10-24 15:26:30,667 [INFO] 118.194.248.4 - - [24/Oct/2025 15:26:30] "[31m[1m\x16\x03\x01\x01\x17\x01\x00\x01\x13\x03\x03^qm\x1bCþ\x01\x91æ\x9d{ÿª)(i\x8bÛ\x80\x95Ã ¥ú±&q=ð\x1fÇÁ ª\x02¾\x82×(U\x1cÁ Ø\x9cxIÝ«¹Íó9Ô^æ\x8dj4áhiþ\x1dõ\x004Ì¨Ì©À/À0À+À,À\x09\x00\x9eÌ¨Ìª\x003\x00=\x00\x16À[0m" 400 -
+2025-10-24 15:26:41,610 [INFO] 118.194.248.4 - - [24/Oct/2025 15:26:41] "[32mGET / HTTP/1.1[0m" 302 -
+2025-10-24 15:26:42,167 [INFO] 118.194.248.4 - - [24/Oct/2025 15:26:42] "GET /dashboard HTTP/1.1" 200 -
+2025-10-24 15:26:42,733 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 15:26:42,736 [INFO] 118.194.248.4 - - [24/Oct/2025 15:26:42] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-10-24 15:26:43,308 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 15:26:43,309 [INFO] 118.194.248.4 - - [24/Oct/2025 15:26:43] "[33mGET /robots.txt HTTP/1.1[0m" 404 -
+2025-10-24 15:26:43,859 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 15:26:43,861 [INFO] 118.194.248.4 - - [24/Oct/2025 15:26:43] "[33mGET /sitemap.xml HTTP/1.1[0m" 404 -
+2025-10-24 15:26:44,433 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 15:26:44,436 [INFO] 118.194.248.4 - - [24/Oct/2025 15:26:44] "[33mGET /config.json HTTP/1.1[0m" 404 -
+2025-10-24 16:40:01,748 [INFO] 191.104.138.21 - - [24/Oct/2025 16:40:01] "GET /dashboard HTTP/1.1" 200 -
+2025-10-24 16:40:03,229 [INFO] 191.104.138.21 - - [24/Oct/2025 16:40:03] "GET /api/stats HTTP/1.1" 200 -
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 16:40:04,894 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 16:40:07,869 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 16:40:09,570 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+2025-10-24 16:40:09,572 [INFO] 191.104.138.21 - - [24/Oct/2025 16:40:09] "GET /api/scanner HTTP/1.1" 200 -
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 16:40:31,182 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+2025-10-24 16:40:31,183 [INFO] 191.104.138.21 - - [24/Oct/2025 16:40:31] "POST /api/ask HTTP/1.1" 200 -
+/usr/local/lib/python3.12/dist-packages/sklearn/utils/validation.py:2749: UserWarning: X does not have valid feature names, but LGBMClassifier was fitted with feature names
+  warnings.warn(
+2025-10-24 16:41:40,282 [INFO] 🧭 Precio lejos de zonas técnicas → señal debilitada
+2025-10-24 16:41:40,284 [INFO] 191.104.138.21 - - [24/Oct/2025 16:41:40] "POST /api/ask HTTP/1.1" 200 -
+2025-10-24 17:53:25,705 [ERROR] 86.54.25.167 - - [24/Oct/2025 17:53:25] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie:')
+2025-10-24 17:53:25,709 [INFO] 86.54.25.167 - - [24/Oct/2025 17:53:25] "[31m[1m\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie: mstshash=Administr[0m" 400 -
+2025-10-24 17:54:11,076 [ERROR] 86.54.25.167 - - [24/Oct/2025 17:54:11] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie:')
+2025-10-24 17:54:11,077 [INFO] 86.54.25.167 - - [24/Oct/2025 17:54:11] "[31m[1m\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie: mstshash=Administr[0m" 400 -
+2025-10-24 18:12:23,929 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 18:12:23,933 [INFO] 191.104.138.21 - - [24/Oct/2025 18:12:23] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-10-24 20:03:52,924 [INFO] 46.161.50.108 - - [24/Oct/2025 20:03:52] "[32mGET / HTTP/1.0[0m" 302 -
+2025-10-24 20:03:58,328 [ERROR] 5.101.64.6 - - [24/Oct/2025 20:03:58] code 400, message Bad HTTP/0.9 request type ('\x16\x03\x01\x05¨\x01\x00\x05¤\x03\x03')
+2025-10-24 20:03:58,328 [INFO] 5.101.64.6 - - [24/Oct/2025 20:03:58] "[31m[1m\x16\x03\x01\x05¨\x01\x00\x05¤\x03\x03 +v=ê\x05¤o\x9b²Õ\x00Ù8(ý\x14[0m" 400 -
+2025-10-24 20:03:58,582 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 20:03:58,585 [INFO] 5.101.64.6 - - [24/Oct/2025 20:03:58] "[33mGET /aaa9 HTTP/1.1[0m" 404 -
+2025-10-24 20:03:58,696 [ERROR] 5.101.64.6 - - [24/Oct/2025 20:03:58] code 400, message Bad request version ('À\x13À')
+2025-10-24 20:03:58,696 [INFO] 5.101.64.6 - - [24/Oct/2025 20:03:58] "[31m[1m\x16\x03\x01\x05¨\x01\x00\x05¤\x03\x03.ÈKG½oøÄ¢å^\x0c\x8a\x90»è\x9c=ñdñ\x93ý\x15\x16ÕÁ¢\x0f·X­ ò\x98½}3È\x82UÍéè\x98\x08Qê=\x07\x0e\x80¢D2÷:Äæ\x0b!DR\x02È\x00\x1aÀ+À/À,À0Ì©Ì¨À\x09À\x13À[0m" 400 -
+2025-10-24 20:03:58,810 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 20:03:58,811 [INFO] 5.101.64.6 - - [24/Oct/2025 20:03:58] "[33mGET /aab9 HTTP/1.1[0m" 404 -
+2025-10-24 20:07:51,409 [ERROR] 185.170.144.3 - - [24/Oct/2025 20:07:51] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie:')
+2025-10-24 20:07:51,409 [INFO] 185.170.144.3 - - [24/Oct/2025 20:07:51] "[31m[1m\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie: mstshash=Administr[0m" 400 -
+2025-10-24 20:21:05,185 [INFO] 3.134.148.59 - - [24/Oct/2025 20:21:05] "[32mGET / HTTP/1.1[0m" 302 -
+2025-10-24 20:21:05,427 [INFO] 3.134.148.59 - - [24/Oct/2025 20:21:05] "GET /dashboard HTTP/1.1" 200 -
+2025-10-24 20:22:01,122 [INFO] 3.134.148.59 - - [24/Oct/2025 20:22:01] "[32mGET / HTTP/1.1[0m" 302 -
+2025-10-24 20:22:42,424 [ERROR] 3.134.148.59 - - [24/Oct/2025 20:22:42] code 400, message Bad request version ('À\x14À')
+2025-10-24 20:22:42,425 [INFO] 3.134.148.59 - - [24/Oct/2025 20:22:42] "[31m[1m\x16\x03\x01\x00{\x01\x00\x00w\x03\x03Õäî\x16¤oØß\x96Ê{³ÏN"ö1t\x07\x1c>¦\x1e\x8f,è\x8aåZÏöV\x00\x00\x1aÀ/À+À\x11À\x07À\x13À\x09À\x14À[0m" 400 -
+2025-10-24 20:48:46,034 [INFO] 165.154.0.193 - - [24/Oct/2025 20:48:46] "[32mGET / HTTP/1.1[0m" 302 -
+2025-10-24 20:48:46,780 [INFO] 165.154.0.193 - - [24/Oct/2025 20:48:46] "[32mGET / HTTP/1.1[0m" 302 -
+2025-10-24 20:48:47,346 [INFO] 165.154.0.193 - - [24/Oct/2025 20:48:47] "GET /dashboard HTTP/1.1" 200 -
+2025-10-24 20:48:48,499 [ERROR] ❌ Error no controlado
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 891, in dispatch_request
+    self.raise_routing_exception(req)
+  File "/usr/local/lib/python3.12/dist-packages/flask/app.py", line 500, in raise_routing_exception
+    raise request.routing_exception  # type: ignore[misc]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/flask/ctx.py", line 362, in match_request
+    result = self.url_adapter.match(return_rule=True)  # type: ignore
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/werkzeug/routing/map.py", line 629, in match
+    raise NotFound() from None
+werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+2025-10-24 20:48:48,503 [INFO] 165.154.0.193 - - [24/Oct/2025 20:48:48] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2025-10-24 21:04:58,700 [INFO] 3.131.215.38 - - [24/Oct/2025 21:04:58] "[32mGET / HTTP/1.1[0m" 302 -
+2025-10-24 21:04:58,930 [INFO] 3.131.215.38 - - [24/Oct/2025 21:04:58] "GET /dashboard HTTP/1.1" 200 -
+2025-10-24 21:07:05,778 [INFO] 3.131.215.38 - - [24/Oct/2025 21:07:05] "[32mGET / HTTP/1.1[0m" 302 -
+2025-10-24 21:09:18,002 [ERROR] 3.131.215.38 - - [24/Oct/2025 21:09:18] code 400, message Bad request version ('À\x14À')
+2025-10-24 21:09:18,003 [INFO] 3.131.215.38 - - [24/Oct/2025 21:09:18] "[31m[1m\x16\x03\x01\x00{\x01\x00\x00w\x03\x03±áAÒ\x95\x1e\x15\x8d{\x00\x89æ\x9cûÞÃ\x0dáu\x9c«æ_\x15t\x0ba-y½H\x98\x00\x00\x1aÀ/À+À\x11À\x07À\x13À\x09À\x14À[0m" 400 -
+2025-10-24 21:09:55,094 [ERROR] 3.131.215.38 - - [24/Oct/2025 21:09:55] code 400, message Bad request syntax ('SSH-2.0-Go')
+2025-10-24 21:09:55,094 [INFO] 3.131.215.38 - - [24/Oct/2025 21:09:55] "[31m[1mSSH-2.0-Go[0m" 400 -
+2025-10-24 21:13:25,816 [ERROR] 3.131.215.38 - - [24/Oct/2025 21:13:25] code 400, message Bad HTTP/0.9 request type ('\x16\x03\x01\x00{\x01\x00\x00w\x03\x039ì2/YY')
+2025-10-24 21:13:25,816 [INFO] 3.131.215.38 - - [24/Oct/2025 21:13:25] "[31m[1m\x16\x03\x01\x00{\x01\x00\x00w\x03\x039ì2/YY\x0cÞµ[0m" 400 -
+2025-10-24 23:03:19,883 [INFO] 205.210.31.245 - - [24/Oct/2025 23:03:19] "[32mGET / HTTP/1.0[0m" 302 -
