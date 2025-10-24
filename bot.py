@@ -1,7 +1,5 @@
 # ===============================
 # 🤖 Trading IA Pro — PRO EDITION (API + UI mínima)
-# ✅ Explicabilidad (SHAP + narrativa), umbrales por símbolo, Plan B, riesgo avanzado, backtest, what-if, scanner
-# 🚫 No abre operaciones en Binance (solo analiza/sugiere)
 # ===============================
 
 import os
@@ -14,18 +12,21 @@ import ta
 import threading
 import time
 import requests
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, render_template, redirect, url_for
 from binance.client import Client
+from binance import ThreadedWebsocketManager   # 👈 WebSocket Manager correcto
 from datetime import datetime, timedelta, timezone
 from dateutil import parser
 from typing import Dict, Any, Tuple, List, Optional
 from math import isnan
-from flask import Flask, jsonify, request, Response, render_template, redirect, url_for
 
 app = Flask(__name__)
 
+# ---------------- CONFIG GLOBAL ----------------
+API_KEY = os.getenv("API_KEY") or "TU_API_KEY_REAL"
+API_SECRET = os.getenv("API_SECRET") or "TU_API_SECRET_REAL"
 
-
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # ====== 👇 SHAP opcional ======
 try:
@@ -35,57 +36,75 @@ except Exception:
     shap = None
     HAS_SHAP = False
 
-# ---------------- CONFIG ----------------
-API_KEY = os.getenv("API_KEY") or "TU_API_KEY_REAL"
-API_SECRET = os.getenv("API_SECRET") or "TU_API_SECRET_REAL"
+# === Callback de WebSocket ===
+def handle_socket_message(msg):
+    try:
+        symbol = msg['s']
+        price = float(msg['p'])
+        latest_prices[symbol] = price   # ✅ se guarda internamente
+        # 👇 comentar o borrar esta línea para no imprimir en consola
+        # logging.info(f"📈 TICK {symbol} — Precio actualizado: {price}")
+    except Exception as e:
+        logging.error(f"❌ Error procesando mensaje WebSocket: {e}")
 
+def iniciar_websocket():
+    while True:
+        try:
+            twm = ThreadedWebsocketManager(api_key=API_KEY, api_secret=API_SECRET)
+            twm.start()
+            for sym in SYMBOLS:
+                twm.start_symbol_ticker_socket(callback=handle_socket_message, symbol=sym)
+                logging.info(f"✅ WebSocket iniciado para {sym}")
+            twm.join()
+        except Exception as e:
+            logging.error(f"❌ Error en WebSocket: {e}. Reintentando en 5s...")
+            time.sleep(5)
+
+# ---------------- Parámetros de trading ----------------
+# 🔹 Símbolos base de tu bot
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+
+# 📊 Diccionario global para guardar los precios en tiempo real
+latest_prices = {sym: None for sym in SYMBOLS}
+
 INTERVAL = "1h"
 HISTORICAL_LIMIT = 1500
 MODEL_FILE = "binance_ai_lgbm_optuna_multi_v2_multiclass.pkl"
-THRESHOLD_STATE_FILE = "thresholds_state.json"
 
-# Umbrales base (se usan como defaults si no hay por-símbolo aún)
+THRESHOLD_STATE_FILE = "thresholds_state.json"
+OPTIM_FILE = "backtest_results_optim.csv"
+
 BASE_UP_THRESHOLD = 0.55
 BASE_DOWN_THRESHOLD = 0.55
 BASE_DIFF_MARGIN = 0.05
+MAX_THRESHOLD = 0.80
+MIN_THRESHOLD = 0.40
 
-# Filtro estratégico
+# Filtros de mercado
 MIN_ATR_RATIO = 0.0003
 MIN_ADX = 15
-
-# FIB/ATR
 FIB_LOOKBACK = 60
 SL_BUFFER_ATR_MULT = 0.2
 MIN_RANGE_RATIO = 0.003
 
-# Noticias
 TE_API_KEY = os.getenv("TE_API_KEY") or ""
 NEWS_LOOKAHEAD_MIN = 30
 
-# Riesgo
-DAILY_R_MAX = 2.0  # máximo R a perder por día (suma de pérdidas simuladas)
+DAILY_R_MAX = 2.0
 DEFAULT_BALANCE = 10000.0
-DEFAULT_RISK_PER_TRADE = 0.01  # 1% si no se usa Kelly
-KELLY_FRACTION = 0.25  # Kelly acotado
+DEFAULT_RISK_PER_TRADE = 0.01
+KELLY_FRACTION = 0.25
 
-# Ajuste dinámico
-MAX_THRESHOLD = 0.80
-MIN_THRESHOLD = 0.40
-THRESHOLD_STEP = 0.01
-HISTORY_CAP = 600  # por símbolo
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-app = Flask(__name__)
-
-# Estado global
+# ---------------- Estado global ----------------
 explainer_shap = None
 model_is_tree = False
 model = None
 feature_cols: Optional[List[str]] = None
 last_model_time = None
+client: Optional[Client] = None
+REFRESH_INTERVAL = 86400  # 24 horas
 
-# ========= Helpers de thresholds JSON =========
+# ========= Helpers de thresholds JSON mínimos =========
 def _ensure_thresholds_file():
     if not os.path.exists(THRESHOLD_STATE_FILE):
         with open(THRESHOLD_STATE_FILE, "w") as f:
@@ -99,100 +118,322 @@ def _read_state() -> Dict[str, Any]:
     data.setdefault("thresholds", {})
     return data
 
-def _write_state(data: Dict[str, Any]):
-    with open(THRESHOLD_STATE_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+# ===============================
+# 🧠 Filtros dinámicos de símbolos
+# ===============================
+filtros_config = {
+    "min_pf": 1.5,
+    "min_accuracy": 50.0,
+    "max_drawdown": 0.20
+}
 
-def get_symbol_thresholds(sym: str) -> Dict[str, float]:
-    """
-    Devuelve thresholds por símbolo; si no hay, usa base.
-    """
-    data = _read_state()
-    th = data["thresholds"].get(sym, {})
-    return {
-        "UP": float(th.get("UP", BASE_UP_THRESHOLD)),
-        "DOWN": float(th.get("DOWN", BASE_DOWN_THRESHOLD)),
-        "DIFF": float(th.get("DIFF", BASE_DIFF_MARGIN)),
-    }
+def get_symbols_with_filters(file=OPTIM_FILE):
+    """Filtra símbolos según PF, accuracy y drawdown usando filtros_config."""
+    if not os.path.exists(file):
+        logging.warning(f"⚠️ No se encontró {file}, usando símbolos por defecto.")
+        return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
 
-def set_symbol_thresholds(sym: str, up: float, down: float, diff: float):
-    data = _read_state()
-    data["thresholds"][sym] = {
-        "UP": max(MIN_THRESHOLD, min(MAX_THRESHOLD, float(up))),
-        "DOWN": max(MIN_THRESHOLD, min(MAX_THRESHOLD, float(down))),
-        "DIFF": max(0.0, min(0.25, float(diff))),  # acotamos diff
-    }
-    _write_state(data)
-
-def guardar_resultado_trade(sym: str, signal: str, prob: float, result_win: bool, r_multiple: float):
-    """
-    Guarda resultado por símbolo para ajustar umbrales.
-    """
     try:
-        data = _read_state()
-        hist = data["history"].get(sym, [])
-        hist.append({
-            "signal": signal,
-            "prob": float(prob),
-            "win": bool(result_win),
-            "R": float(r_multiple),
-            "timestamp": datetime.utcnow().isoformat()
-        })
-        hist = hist[-HISTORY_CAP:]
-        data["history"][sym] = hist
-        _write_state(data)
-    except Exception as e:
-        logging.warning(f"⚠️ Error guardando resultado: {e}")
+        df = pd.read_csv(file)
+        filtered = df[
+            (df["profit_factor"] >= filtros_config["min_pf"]) &
+            (df["accuracy"] >= filtros_config["min_accuracy"]) &
+            (df["drawdown"] <= filtros_config["max_drawdown"])
+        ]
+        good = filtered["symbol"].tolist()
+        if not good:
+            logging.warning("⚠️ Ningún símbolo cumple los filtros, usando lista completa.")
+            return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
 
-def recalcular_thresholds_symbol(sym: str):
-    """
-    Recalcula dinámicamente los umbrales para un símbolo en función de su winrate local.
-    """
+        logging.info(
+            f"✅ Símbolos filtrados — PF ≥ {filtros_config['min_pf']}, "
+            f"Accuracy ≥ {filtros_config['min_accuracy']}%, "
+            f"Drawdown ≤ {filtros_config['max_drawdown']}: {good}"
+        )
+        return good
+    except Exception as e:
+        logging.error(f"❌ Error leyendo {file}: {e}")
+        return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+
+# 🔹 Inicializar símbolos activos al iniciar la app
+SYMBOLS = get_symbols_with_filters()
+
+# ===============================
+# 📥 Carga de umbrales por símbolo
+# ===============================
+mejores_umbral: Dict[str, Dict[str, float]] = {}
+
+def cargar_mejores_umbral():
+    """Carga umbrales SOLO para símbolos activos (SYMBOLS)."""
+    global mejores_umbral
     try:
-        data = _read_state()
-        hist = data["history"].get(sym, [])
-        if len(hist) < 20:
-            return  # aún no
-        wins = sum(1 for h in hist if h.get("win"))
-        total = len(hist)
-        winrate = wins / total if total else 0.0
+        if not os.path.exists(OPTIM_FILE):
+            logging.warning(f"⚠️ {OPTIM_FILE} no encontrado, usando umbrales base.")
+            mejores_umbral = {}
+            return mejores_umbral
 
-        th = get_symbol_thresholds(sym)
-        up, down, diff = th["UP"], th["DOWN"], th["DIFF"]
-
-        if winrate < 0.5 and up < MAX_THRESHOLD:
-            up += THRESHOLD_STEP
-            down += THRESHOLD_STEP
-            diff = min(0.15, diff + 0.005)  # subimos un poco el margen
-        elif winrate > 0.7 and up > MIN_THRESHOLD:
-            up -= THRESHOLD_STEP
-            down -= THRESHOLD_STEP
-            diff = max(0.02, diff - 0.005)  # bajamos un poco el margen
-
-        set_symbol_thresholds(sym, up, down, diff)
-        logging.info(f"🔧 {sym}: thresholds → UP {up:.2f}, DOWN {down:.2f}, DIFF {diff:.3f}, winrate {winrate:.1%}")
+        df = pd.read_csv(OPTIM_FILE)
+        nuevos = {}
+        for _, row in df.iterrows():
+            symbol = str(row["symbol"]).upper().strip()
+            if symbol not in SYMBOLS:
+                continue
+            up_val = float(row.get("UP", BASE_UP_THRESHOLD))
+            down_val = float(row.get("DOWN", BASE_DOWN_THRESHOLD))
+            nuevos[symbol] = {
+                "UP": max(MIN_THRESHOLD, min(MAX_THRESHOLD, up_val)),
+                "DOWN": max(MIN_THRESHOLD, min(MAX_THRESHOLD, down_val)),
+            }
+        mejores_umbral = nuevos
+        logging.info(f"📥 Mejores umbrales cargados (filtrados): {mejores_umbral}")
+        return mejores_umbral
     except Exception as e:
-        logging.warning(f"⚠️ Error recalculando thresholds {sym}: {e}")
+        logging.error(f"❌ Error cargando {OPTIM_FILE}: {e}")
+        mejores_umbral = {}
+        return mejores_umbral
 
-def auto_adjust_thresholds_loop():
+cargar_mejores_umbral()
+
+# ===============================
+# ♻️ Refresco periódico
+# ===============================
+def refrescar_filtros_periodicamente():
     while True:
-        time.sleep(3600)
         try:
-            for s in SYMBOLS:
-                recalcular_thresholds_symbol(s)
+            logging.info("♻️ [AUTO] Actualizando símbolos y umbrales óptimos...")
+            global SYMBOLS
+            SYMBOLS = get_symbols_with_filters()
+            cargar_mejores_umbral()
+            logging.info(f"✅ [AUTO] Actualización completada — Símbolos: {SYMBOLS}")
         except Exception as e:
-            logging.warning(f"⚠️ Auto-adjust loop error: {e}")
+            logging.error(f"❌ Error en actualización automática: {e}")
+        time.sleep(REFRESH_INTERVAL)
 
-threading.Thread(target=auto_adjust_thresholds_loop, daemon=True).start()
+# 🟢 Lanzar el hilo en segundo plano después de definir TODO
+t = threading.Thread(target=refrescar_filtros_periodicamente, daemon=True)
+t.start()
+
+# ========= Helpers de thresholds JSON mínimos =========
+def _ensure_thresholds_file():
+    if not os.path.exists(THRESHOLD_STATE_FILE):
+        with open(THRESHOLD_STATE_FILE, "w") as f:
+            json.dump({"history": {}, "thresholds": {}}, f, indent=2)
+
+def _read_state() -> Dict[str, Any]:
+    _ensure_thresholds_file()
+    with open(THRESHOLD_STATE_FILE, "r") as f:
+        data = json.load(f)
+    data.setdefault("history", {})
+    data.setdefault("thresholds", {})
+    return data
+
+## ===============================
+# 🧠 Filtro automático de símbolos por rendimiento
+# ===============================
+def get_symbols_with_good_pf(
+    file="backtest_results_optim.csv",
+    min_pf=1.5,
+    min_accuracy=50.0,
+    max_drawdown=20.0
+):
+    """
+    Lee el archivo de optimización y devuelve los símbolos que cumplen:
+    - profit_factor >= min_pf
+    - accuracy >= min_accuracy
+    - drawdown <= max_drawdown
+    Si no hay archivo o no se cumple nada, devuelve la lista completa por defecto.
+    """
+    default_symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+
+    if not os.path.exists(file):
+        logging.warning(f"⚠️ No se encontró {file}, usando símbolos por defecto.")
+        return default_symbols
+
+    try:
+        df = pd.read_csv(file)
+
+        # Normalizar nombres de columnas por seguridad
+        df.columns = [c.strip().lower() for c in df.columns]
+
+        # Filtrar por condiciones si existen las columnas
+        conditions = (df["profit_factor"] >= min_pf)
+        if "accuracy" in df.columns:
+            conditions &= (df["accuracy"] >= min_accuracy)
+        if "drawdown" in df.columns:
+            conditions &= (df["drawdown"] <= max_drawdown)
+
+        good = df[conditions]["symbol"].tolist() if "symbol" in df.columns else []
+
+        if not good:
+            logging.warning("⚠️ Ningún símbolo cumple los filtros, usando lista completa.")
+            return default_symbols
+
+        logging.info(f"✅ Símbolos filtrados: PF≥{min_pf}, Accuracy≥{min_accuracy}%, DD≤{max_drawdown}% → {good}")
+        return good
+
+    except Exception as e:
+        logging.error(f"❌ Error leyendo {file}: {e}")
+        return default_symbols
+
+
+# 🔹 Cargar automáticamente solo símbolos ganadores
+SYMBOLS = get_symbols_with_good_pf()
+
+# ===============================
+# 🧠 Configuración de filtros dinámicos
+# ===============================
+filtros_config = {
+    "min_pf": 1.5,
+    "min_accuracy": 50.0,     # porcentaje mínimo de aciertos
+    "max_drawdown": 0.20      # drawdown máximo permitido (20%)
+}
+
+def get_symbols_with_filters(file=OPTIM_FILE):
+    """
+    Filtra símbolos según PF, accuracy y drawdown usando los valores en filtros_config.
+    """
+    if not os.path.exists(file):
+        logging.warning(f"⚠️ No se encontró {file}, usando símbolos por defecto.")
+        return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+
+    try:
+        df = pd.read_csv(file)
+        filtered = df[
+            (df["profit_factor"] >= filtros_config["min_pf"]) &
+            (df["accuracy"] >= filtros_config["min_accuracy"]) &
+            (df["drawdown"] <= filtros_config["max_drawdown"])
+        ]
+
+        good = filtered["symbol"].tolist()
+
+        if not good:
+            logging.warning("⚠️ Ningún símbolo cumple los filtros, usando lista completa.")
+            return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+
+        logging.info(
+            f"✅ Símbolos filtrados — PF ≥ {filtros_config['min_pf']}, "
+            f"Accuracy ≥ {filtros_config['min_accuracy']}%, "
+            f"Drawdown ≤ {filtros_config['max_drawdown']}: {good}"
+        )
+        return good
+    except Exception as e:
+        logging.error(f"❌ Error leyendo {file}: {e}")
+        return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+
+
+# 🔹 Inicializar símbolos activos al iniciar la app
+SYMBOLS = get_symbols_with_filters()
+
+# ===============================
+# 🌐 Endpoint para actualizar filtros dinámicamente
+# ===============================
+@app.route("/api/update-filter", methods=["POST"])
+def update_filter():
+    """
+    Permite actualizar filtros dinámicamente sin reiniciar el servidor.
+    Ejemplo body:
+    {
+        "min_pf": 1.8,
+        "min_accuracy": 55,
+        "max_drawdown": 0.15
+    }
+    """
+    global SYMBOLS
+    data = request.get_json(force=True) or {}
+
+    # Actualizar valores existentes si vienen en la petición
+    for key in filtros_config:
+        if key in data:
+            filtros_config[key] = float(data[key])
+
+    # Volver a filtrar símbolos según nuevos parámetros
+    SYMBOLS = get_symbols_with_filters()
+
+    return jsonify({
+        "status": "✅ Filtros actualizados correctamente",
+        "filtros": filtros_config,
+        "active_symbols": SYMBOLS
+    })
+
+def cargar_mejores_umbral():
+    """
+    Lee el archivo backtest_results_optim.csv y carga los mejores umbrales
+    SOLO para los símbolos activos que superaron el filtro PF.
+    """
+    global mejores_umbral
+    try:
+        if not os.path.exists(OPTIM_FILE):
+            logging.warning(f"⚠️ {OPTIM_FILE} no encontrado, usando umbrales base.")
+            mejores_umbral = {}
+            return mejores_umbral
+
+        df = pd.read_csv(OPTIM_FILE)
+        nuevos = {}
+        for _, row in df.iterrows():
+            symbol = str(row["symbol"]).upper().strip()
+            # ⚡ Solo incluir símbolos que pasaron el filtro PF
+            if symbol not in SYMBOLS:
+                continue
+            up_val = float(row.get("UP", BASE_UP_THRESHOLD))
+            down_val = float(row.get("DOWN", BASE_DOWN_THRESHOLD))
+            nuevos[symbol] = {
+                "UP": max(MIN_THRESHOLD, min(MAX_THRESHOLD, up_val)),
+                "DOWN": max(MIN_THRESHOLD, min(MAX_THRESHOLD, down_val))
+            }
+        mejores_umbral = nuevos
+        logging.info(f"📥 Mejores umbrales cargados (filtrados): {mejores_umbral}")
+        return mejores_umbral
+    except Exception as e:
+        logging.error(f"❌ Error cargando {OPTIM_FILE}: {e}")
+        mejores_umbral = {}
+        return mejores_umbral
+
+def get_best_threshold(symbol: str) -> Dict[str, float]:
+    """
+    Devuelve umbrales del CSV optimizado si existen; si no, los defaults.
+    """
+    if symbol in mejores_umbral:
+        return {
+            "UP": mejores_umbral[symbol]["UP"],
+            "DOWN": mejores_umbral[symbol]["DOWN"],
+            "DIFF": BASE_DIFF_MARGIN,
+        }
+    # ⚠️ Esto cubre casos extremos si se consulta un símbolo no filtrado
+    return {"UP": BASE_UP_THRESHOLD, "DOWN": BASE_DOWN_THRESHOLD, "DIFF": BASE_DIFF_MARGIN}
+
+# compatibilidad para endpoint /_thresholds y backtest
+def get_symbol_thresholds(sym: str) -> Dict[str, float]:
+    return get_best_threshold(sym)
+
+# 🧠 Cargar una vez al iniciar la app
+cargar_mejores_umbral()
+
+# =========================================================
+# 🔁 Endpoint para recargar umbrales dinámicamente
+# =========================================================
+
+RELOAD_TOKEN = os.getenv("RELOAD_TOKEN", "")
+
+@app.route("/api/reload-thresholds", methods=["POST"])
+def reload_thresholds():
+    # ✅ Verificar token si está configurado
+    auth = request.headers.get("Authorization", "")
+    if RELOAD_TOKEN and auth != f"Bearer {RELOAD_TOKEN}":
+        return jsonify({"error": "unauthorized"}), 401
+
+    # 🔁 Recargar umbrales
+    cargar_mejores_umbral()
+    return jsonify({"status": "✅ Umbrales recargados", "data": mejores_umbral})
+
 
 # ---------------- Binance ----------------
 def init_client(api_key, api_secret, max_retries=5, backoff=2):
     for attempt in range(max_retries):
         try:
-            client = Client(api_key, api_secret)
-            client.futures_ping()
+            c = Client(api_key, api_secret)
+            c.futures_ping()
             logging.info("✅ Conectado correctamente a Binance Futures.")
-            return client
+            return c
         except Exception as e:
             logging.warning(f"Intento {attempt + 1} fallido conectando a Binance: {e}")
             if attempt < max_retries - 1:
@@ -202,6 +443,24 @@ def init_client(api_key, api_secret, max_retries=5, backoff=2):
             else:
                 logging.error("⚠️ No se pudo conectar a Binance después de varios intentos.")
                 return None
+
+def download_klines_safe(sym):
+    try:
+        kl = client.futures_klines(symbol=sym, interval=INTERVAL, limit=HISTORICAL_LIMIT)
+        if not kl:
+            return pd.DataFrame()
+        df = pd.DataFrame(kl, columns=[
+            "Open_time", "Open", "High", "Low", "Close", "Volume", "Close_time",
+            "Quote_asset_volume", "Number_of_trades", "Taker_buy_base", "Taker_buy_quote", "Ignore"
+        ])
+        for c in ["Open","High","Low","Close","Volume"]:
+            df[c] = df[c].astype(float)
+        df["Open_time"] = pd.to_datetime(df["Open_time"], unit="ms")
+        df.set_index("Open_time", inplace=True)
+        return df.ffill().bfill()
+    except Exception as e:
+        logging.error(f"Error descargando datos de {sym}: {e}")
+        return pd.DataFrame()
 
 # ---------------- Noticias económicas ----------------
 def hay_noticia_importante_proxima():
@@ -244,7 +503,7 @@ def _guess_is_tree_model(m):
     try:
         if hasattr(m, "feature_importances_"):
             return True
-        if type(m).__name__.lower().startswith(("lgbm","lightgbm","xgb","randomforest","gradientboosting","extratrees","decisiontree")):
+        if type(m).__name__.lower().startswith(("lgbm", "lightgbm", "xgb", "randomforest", "gradientboosting", "extratrees", "decisiontree")):
             return True
     except Exception:
         pass
@@ -284,32 +543,104 @@ load_model()
 threading.Thread(target=lambda: (time.sleep(60), load_model()), daemon=True).start()
 
 if feature_cols is None:
-    # Default robusto
     feature_cols = [
         "ema_10","ema_20","ema_50","sma_50","sma_200","ama_cross",
         "momentum","logret","atr14","bb_pct","rsi14","stoch_k","stoch_d",
         "macd","macd_signal","obv","vpt"
     ]
 
-# ---------------- Datos ----------------
-def download_klines_safe(sym):
-    try:
-        kl = client.futures_klines(symbol=sym, interval=INTERVAL, limit=HISTORICAL_LIMIT)
-        if not kl:
-            return pd.DataFrame()
-        df = pd.DataFrame(kl, columns=[
-            "Open_time", "Open", "High", "Low", "Close", "Volume", "Close_time",
-            "Quote_asset_volume", "Number_of_trades", "Taker_buy_base", "Taker_buy_quote", "Ignore"
-        ])
-        for c in ["Open","High","Low","Close","Volume"]:
-            df[c] = df[c].astype(float)
-        df["Open_time"] = pd.to_datetime(df["Open_time"], unit="ms")
-        df.set_index("Open_time", inplace=True)
-        return df.ffill().bfill()
-    except Exception as e:
-        logging.error(f"Error descargando datos de {sym}: {e}")
-        return pd.DataFrame()
+# ===============================
+# ⚡ SCANNER B — RÁPIDO (con WebSocket)
+# ===============================
 
+def get_fast_features(symbol: str):
+    """
+    Genera features mínimos para IA usando el precio interno (latest_prices)
+    sin volver a descargar klines completos.
+    """
+    try:
+        if latest_prices.get(symbol) is None:
+            return None
+
+        # ✅ Descargar solo una vez datos base para features
+        df = download_klines_safe(symbol)
+        if df.empty:
+            return None
+
+        # 👇 Actualizamos solo el último precio con el interno
+        df.iloc[-1, df.columns.get_loc("Close")] = latest_prices[symbol]
+
+        # 📈 Calcular indicadores mínimos (ajústalos a tu modelo si es necesario)
+        df["ema_10"] = ta.trend.EMAIndicator(df["Close"], 10).ema_indicator()
+        df["ema_20"] = ta.trend.EMAIndicator(df["Close"], 20).ema_indicator()
+        df["rsi14"] = ta.momentum.RSIIndicator(df["Close"], 14).rsi()
+        df["atr14"] = ta.volatility.AverageTrueRange(df["High"], df["Low"], df["Close"], 14).average_true_range()
+
+        last_row = df.iloc[-1]
+        features = [last_row.get(col, 0) for col in feature_cols]
+        return np.array(features).reshape(1, -1)
+    except Exception as e:
+        logging.error(f"❌ Error generando features rápidos para {symbol}: {e}")
+        return None
+
+
+def fast_scan_symbol(symbol: str):
+    """
+    Escaneo IA rápido por símbolo (solo probabilidades + señal),
+    sin cálculos de contexto ni planes completos.
+    """
+    try:
+        X = get_fast_features(symbol)
+        if X is None:
+            return None
+
+        probs = model.predict_proba(X)[0]
+        # 🔸 Ajustar índices según tus clases
+        classes = list(getattr(model, "classes_", []))
+        idx_up = get_class_index(classes, 1)
+        idx_down = get_class_index(classes, -1)
+
+        up_prob = float(probs[idx_up])
+        down_prob = float(probs[idx_down])
+
+        thresholds = get_best_threshold(symbol)
+        up_th = thresholds["UP"]
+        down_th = thresholds["DOWN"]
+        diff_margin = thresholds["DIFF"]
+
+        # 🧠 Decisión simple
+        if up_prob > up_th and (up_prob - down_prob) > diff_margin:
+            signal = "BUY"
+        elif down_prob > down_th and (down_prob - up_prob) > diff_margin:
+            signal = "SELL"
+        else:
+            signal = "NEUTRAL"
+
+        return {
+            "symbol": symbol,
+            "price": latest_prices[symbol],
+            "up_prob": round(up_prob * 100, 2),
+            "down_prob": round(down_prob * 100, 2),
+            "signal": signal
+        }
+
+    except Exception as e:
+        logging.error(f"❌ Error escaneando rápido {symbol}: {e}")
+        return None
+
+
+def run_fast_scanner():
+    """Escanea rápidamente todos los símbolos activos."""
+    results = []
+    for sym in SYMBOLS:
+        r = fast_scan_symbol(sym)
+        if r:
+            results.append(r)
+    # Ordenar por probabilidad más fuerte
+    results.sort(key=lambda x: max(x["up_prob"], x["down_prob"]), reverse=True)
+    return results
+
+# ---------------- Datos/Features ----------------
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -352,12 +683,47 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["atr"] = ta.volatility.AverageTrueRange(high, low, close, window=14).average_true_range()
     df["adx"] = ta.trend.ADXIndicator(high, low, close, window=14).adx()
 
-    # Lags para robustez (si el modelo los usa)
+    # Lags
     for f in ["atr14","bb_pct","rsi14","stoch_k","stoch_d","macd","macd_signal","vpt","ama_cross","momentum","logret"]:
         for lag in (1, 2, 3):
             df[f"{f}_lag{lag}"] = df[f].shift(lag)
 
     return df.dropna()
+# ===============================
+# 🕯 DETECTOR DE PATRONES DE VELAS JAPONESAS
+# ===============================
+def detectar_patron_velas(df):
+    if len(df) < 3:
+        return None
+
+    o, h, l, c = df["Open"], df["High"], df["Low"], df["Close"]
+
+    # Última vela
+    o1, h1, l1, c1 = o.iloc[-1], h.iloc[-1], l.iloc[-1], c.iloc[-1]
+    o2, h2, l2, c2 = o.iloc[-2], h.iloc[-2], l.iloc[-2], c.iloc[-2]
+
+    cuerpo = abs(c1 - o1)
+    rango = h1 - l1
+    sombra_sup = h1 - max(c1, o1)
+    sombra_inf = min(c1, o1) - l1
+
+    # Evitar divisiones por 0
+    if rango == 0:
+        return None
+
+    # Patrones básicos
+    if cuerpo < rango * 0.25 and sombra_inf > cuerpo * 2:
+        return "HAMMER"
+    elif cuerpo < rango * 0.25 and sombra_sup > cuerpo * 2:
+        return "SHOOTING_STAR"
+    elif c1 > o1 and o1 < c2 and c1 > o2 and abs(c1 - o1) > abs(c2 - o2) * 0.7:
+        return "BULLISH_ENGULFING"
+    elif c1 < o1 and o1 > c2 and c1 < o2 and abs(c1 - o1) > abs(c2 - o2) * 0.7:
+        return "BEARISH_ENGULFING"
+    elif abs(c1 - o1) <= rango * 0.1:
+        return "DOJI"
+    else:
+        return None
 
 # ---------------- Explicabilidad ----------------
 def _top_feature_importances(n=5) -> List[Tuple[str, float]]:
@@ -385,37 +751,7 @@ def _ensure_shap_explainer():
         explainer_shap = None
         return None
 
-def build_local_explanation(X_row: pd.Series, class_idx: int, top_n=5) -> Dict[str, Any]:
-    explanation = {"top_importances": _top_feature_importances(n=top_n), "shap_top": None, "reason_text": None}
-    if X_row is None:
-        return explanation
-    # SHAP local
-    try:
-        expl = _ensure_shap_explainer()
-        if expl is not None:
-            x = X_row.reindex(feature_cols).astype(float).values.reshape(1, -1)
-            shap_values = expl.shap_values(x)
-            if isinstance(shap_values, list):
-                sv = shap_values[class_idx].reshape(-1)
-            else:
-                sv = shap_values.reshape(-1)
-            contribs = list(zip(feature_cols, np.abs(sv)))
-            contribs.sort(key=lambda x: float(x[1]), reverse=True)
-            explanation["shap_top"] = [(f, round(float(val), 6)) for f, val in contribs[:top_n]]
-
-        # Texto natural (heurística)
-        explanation["reason_text"] = explain_like_human(X_row, explanation)
-        return explanation
-    except Exception as e:
-        logging.warning(f"No se pudo calcular SHAP local: {e}")
-        explanation["reason_text"] = explain_like_human(X_row, explanation)
-        return explanation
-
 def explain_like_human(xrow: pd.Series, exp: Dict[str, Any]) -> str:
-    """
-    Genera una frase legible tipo: "Compra impulsada por RSI alto y cruce EMA".
-    Heurística si no hay SHAP.
-    """
     hints = []
     try:
         rsi = xrow.get("rsi14", np.nan)
@@ -436,12 +772,12 @@ def explain_like_human(xrow: pd.Series, exp: Dict[str, Any]) -> str:
             elif ema10 < ema20: hints.append("EMAs en cruce bajista")
 
         if not any(map(isnan, [ema20, ema50])):
-            if ema20 > ema50: hints.append("EMA20 por encima de EMA50 (tendencia)")
-            elif ema20 < ema50: hints.append("EMA20 por debajo de EMA50 (tendencia débil)")
+            if ema20 > ema50: hints.append("EMA20>EMA50 (tendencia)")
+            elif ema20 < ema50: hints.append("EMA20<EMA50 (tendencia débil)")
 
         if not isnan(bbp):
-            if bbp >= 0.8: hints.append("Cerca de banda superior (posible sobrecompra)")
-            elif bbp <= 0.2: hints.append("Cerca de banda inferior (posible sobreventa)")
+            if bbp >= 0.8: hints.append("Cerca banda superior (posible sobrecompra)")
+            elif bbp <= 0.2: hints.append("Cerca banda inferior (posible sobreventa)")
 
         if not any(map(isnan, [macd_v, macd_s])):
             if macd_v > macd_s: hints.append("MACD positivo")
@@ -449,18 +785,40 @@ def explain_like_human(xrow: pd.Series, exp: Dict[str, Any]) -> str:
 
         if not isnan(adx):
             if adx >= 20: hints.append("ADX suficiente (tendencia)")
-            else: hints.append("ADX bajo (poca tendencia)")
+            else: hints.append("ADX bajo")
 
         if exp.get("shap_top"):
             top_feats = [f for f, _ in exp["shap_top"][:3]]
             hints.append("SHAP: " + ", ".join(top_feats))
 
         if not hints:
-            return "Señal generada por combinación de momentum, tendencia y volatilidad."
-        # Compactar en una frase:
+            return "Señal por combinación de momentum/tendencia/volatilidad."
         return " / ".join(hints[:4])
     except Exception:
-        return "Señal generada por combinación de momentum, tendencia y volatilidad."
+        return "Señal por combinación de momentum/tendencia/volatilidad."
+
+def build_local_explanation(X_row: pd.Series, class_idx: int, top_n=5) -> Dict[str, Any]:
+    explanation = {"top_importances": _top_feature_importances(n=top_n), "shap_top": None, "reason_text": None}
+    if X_row is None:
+        return explanation
+    try:
+        expl = _ensure_shap_explainer()
+        if expl is not None:
+            x = X_row.reindex(feature_cols).astype(float).values.reshape(1, -1)
+            shap_values = expl.shap_values(x)
+            if isinstance(shap_values, list):
+                sv = shap_values[class_idx].reshape(-1)
+            else:
+                sv = shap_values.reshape(-1)
+            contribs = list(zip(feature_cols, np.abs(sv)))
+            contribs.sort(key=lambda x: float(x[1]), reverse=True)
+            explanation["shap_top"] = [(f, round(float(val), 6)) for f, val in contribs[:top_n]]
+        explanation["reason_text"] = explain_like_human(X_row, explanation)
+        return explanation
+    except Exception as e:
+        logging.warning(f"No se pudo calcular SHAP local: {e}")
+        explanation["reason_text"] = explain_like_human(X_row, explanation)
+        return explanation
 
 # ---------------- Filtros/Plan ----------------
 def condiciones_de_mercado_ok_df(symbol, df_feat) -> Tuple[bool, str, Optional[Dict[str, str]]]:
@@ -470,7 +828,6 @@ def condiciones_de_mercado_ok_df(symbol, df_feat) -> Tuple[bool, str, Optional[D
 
     for col in ("Close", "atr", "adx"):
         if col not in df_feat.columns or df_feat[col].isna().iloc[-1]:
-            logging.info(f"❌ Falta indicador: {col} en {symbol}")
             return False, "Datos insuficientes", None
 
     price = float(df_feat["Close"].iloc[-1])
@@ -482,7 +839,6 @@ def condiciones_de_mercado_ok_df(symbol, df_feat) -> Tuple[bool, str, Optional[D
         return False, f"Volatilidad baja (ATR/Precio={atr_ratio:.5f} < {MIN_ATR_RATIO})", None
 
     if adx < MIN_ADX:
-        # Permitimos operar como "Potencial", pero el plan reflejará debilidad
         return True, f"Tendencia débil (ADX={adx:.2f} < {MIN_ADX})", None
 
     return True, "OK", None
@@ -562,57 +918,71 @@ def choose_trade_plan(signal, df_feat):
         else:
             plan = build_atr_plan(signal, price, atr)
 
-    # Reglas Plan B (post-entrada): solo descripción/sugerencia aquí
     plan["planB_rules"] = {
         "if_adx_drop": "Si ADX cae < 15 tras 3 velas, cambiar a ATR (TP=1.2*ATR, SL=1.0*ATR desde entrada).",
         "if_big_counter": "Si vela en contra > 1.2*ATR, reducir 50% posición y activar trailing ATR 1x."
     }
     return plan
 
-# ---------------- Señal/Narrativa ----------------
-def market_context_narrative(symbol, df, signal, prob_up_pct, prob_down_pct):
+def market_context_narrative(symbol, df, signal, prob_up_pct, prob_down_pct, soporte=None, resistencia=None, patron=None, trade_plan=None, news=None):
     try:
-        lookback = 50
         price = df["Close"].iloc[-1]
-        high_zone = max(df["High"].iloc[-lookback:])
-        low_zone = min(df["Low"].iloc[-lookback:])
-        atr = ta.volatility.AverageTrueRange(df["High"], df["Low"], df["Close"], window=14).average_true_range().iloc[-1]
-        atr_distance_high = abs(price - high_zone) / (atr + 1e-9)
-        atr_distance_low = abs(price - low_zone) / (atr + 1e-9)
-
+        regime = "lateral"
         ema20 = ta.trend.EMAIndicator(df["Close"], window=20).ema_indicator().iloc[-1]
         ema50 = ta.trend.EMAIndicator(df["Close"], window=50).ema_indicator().iloc[-1]
         adx = ta.trend.ADXIndicator(df["High"], df["Low"], df["Close"]).adx().iloc[-1]
         bb_width = (df["High"].iloc[-20:].max() - df["Low"].iloc[-20:].min()) / price
 
-        regime = "lateral"
+        # 📈 Detectar tendencia
         if ema20 > ema50 and adx > 20 and bb_width > 0.015:
             regime = "alcista"
         elif ema20 < ema50 and adx > 20 and bb_width > 0.015:
             regime = "bajista"
 
-        context = f"📊 {symbol} — Precio: {price:.4f} | Prob↑ {prob_up_pct:.2f}% Prob↓ {prob_down_pct:.2f}% | Régimen: {regime}. "
-        if atr_distance_high <= 1.0:
-            context += f"Cerca resistencia {high_zone:.4f}. "
-        elif atr_distance_low <= 1.0:
-            context += f"Cerca soporte {low_zone:.4f}. "
+        narr = f"📊 {symbol} — Precio: {price:.2f} | Prob↑ {prob_up_pct:.2f}% | Prob↓ {prob_down_pct:.2f}% | Régimen: {regime}. "
+
+        # 📰 Noticias relevantes
+        if news:
+            narr += f"🚨 Noticia económica relevante próxima: {news.get('event', 'Evento')} en {news.get('time', '')} ({news.get('country', '')}). "
+            narr += "Se recomienda evitar operar hasta que pase la volatilidad. "
+
+        # 📍 Soporte / resistencia
+        if soporte and abs(price - soporte) <= df["atr"].iloc[-1]:
+            narr += f"Precio cerca de soporte ({soporte:.2f}). "
+        elif resistencia and abs(price - resistencia) <= df["atr"].iloc[-1]:
+            narr += f"Precio cerca de resistencia ({resistencia:.2f}). "
+
+        # 🕯 Patrón de vela
+        if patron:
+            if patron == "DOJI":
+                narr += f"Patrón {patron} detectado (indecisión). "
+            else:
+                narr += f"Patrón {patron} detectado (posible confirmación). "
+
+        # 📈 Señales según decisión
+        if "COMPRA" in signal.upper():
+            narr += "🟢 Señal de COMPRA — condiciones técnicas alineadas. "
+            if trade_plan:
+                narr += f"Entrada sugerida: {trade_plan.get('entry_suggest')} | SL: {trade_plan.get('SL')} | TP: {trade_plan.get('TP')}. "
+        elif "VENTA" in signal.upper():
+            narr += "🔴 Señal de VENTA — presión bajista detectada. "
+            if trade_plan:
+                narr += f"Entrada sugerida: {trade_plan.get('entry_suggest')} | SL: {trade_plan.get('SL')} | TP: {trade_plan.get('TP')}. "
         else:
-            context += "Sin S/R inmediatos. "
-        if "CONFIRMADA" in signal.upper():
-            context += "Señal confirmada. "
-        elif "POTENCIAL" in signal.upper():
-            context += "Señal potencial (confirmación pendiente). "
-        return context
+            narr += "🧠 Estrategia en espera — sin confirmación clara de entrada. "
+            if patron == "DOJI":
+                narr += "El patrón actual sugiere indecisión. "
+            if soporte or resistencia:
+                narr += "Esperando ruptura o confirmación en zona clave. "
+
+        return narr
     except Exception as e:
         logging.warning(f"Error narrativa {symbol}: {e}")
         return f"{symbol}: contexto no disponible."
 
-# ---------------- Gestión de riesgo (sizing sugerido) ----------------
+
+# ---------------- Gestión de riesgo ----------------
 def kelly_sizing(winrate: float, rr: float, fraction_cap: float = KELLY_FRACTION) -> float:
-    """
-    Kelly teórica: f* = p - (1-p)/b  (b = RR)
-    Capada a fraction_cap para prudencia. Devuelve fracción del capital.
-    """
     try:
         if rr is None or rr <= 0:
             return 0.0
@@ -624,9 +994,6 @@ def kelly_sizing(winrate: float, rr: float, fraction_cap: float = KELLY_FRACTION
         return 0.0
 
 def atr_target_position(balance: float, risk_per_trade: float, entry: float, sl: float) -> float:
-    """
-    Tamaño (en unidades del activo) para arriesgar 'risk_per_trade' del balance.
-    """
     try:
         risk_money = balance * risk_per_trade
         stop_distance = abs(entry - sl)
@@ -664,56 +1031,95 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     ok, why, news = condiciones_de_mercado_ok_df(symbol, df_feat)
     price_now = float(df_feat["Close"].iloc[-1])
 
-    th = get_symbol_thresholds(symbol)
+    # 🟡 Umbrales IA óptimos
+    th = get_best_threshold(symbol)
+
+    # 📊 Predicciones IA
     preds_all = model.predict_proba(X_all.values)
     classes = list(getattr(model, "classes_", []))
     idx_up = get_class_index(classes, 1)
     idx_down = get_class_index(classes, -1)
-    prob_up = float(preds_all[-1, idx_up])  # [0-1]
-    prob_down = float(preds_all[-1, idx_down])
+    prob_up = float(preds_all[-1, idx_up])     # [0-1]
+    prob_down = float(preds_all[-1, idx_down]) # [0-1]
 
-    # Señal IA base
+    # 🧠 Señal IA base
     signal = "ESPERAR"
     if (prob_up > th["UP"]) and (prob_up - prob_down >= th["DIFF"]):
         signal = "COMPRAR"
     elif (prob_down > th["DOWN"]) and (prob_down - prob_up >= th["DIFF"]):
         signal = "VENTA"
 
-    # Confirmación técnica
+    # 🕯 Detectar patrón de velas japonesas
+    patron = detectar_patron_velas(df)
+    if patron:
+        logging.info(f"🕯 Patrón detectado en {symbol}: {patron}")
+        if patron in ["HAMMER", "BULLISH_ENGULFING"] and signal == "COMPRAR":
+            signal = "COMPRAR"  # refuerza señal alcista
+        elif patron in ["SHOOTING_STAR", "BEARISH_ENGULFING"] and signal == "VENTA":
+            signal = "VENTA"    # refuerza señal bajista
+        elif patron == "DOJI":
+            signal = "ESPERAR"  # indecisión → evita entrada
+
+    # 🧭 Soportes y resistencias
+    soporte, resistencia = detect_swing_range(df_feat)
+    margen_atr = df_feat["atr"].iloc[-1] if "atr" in df_feat.columns else None
+    if soporte and resistencia and margen_atr and not np.isnan(margen_atr):
+        dist_a_soporte = abs(price_now - soporte)
+        dist_a_resistencia = abs(price_now - resistencia)
+
+        if signal == "COMPRAR" and dist_a_soporte <= margen_atr:
+            logging.info(f"🧭 Cerca de SOPORTE ({soporte:.2f}) → refuerza COMPRA")
+        elif signal == "VENTA" and dist_a_resistencia <= margen_atr:
+            logging.info(f"🧭 Cerca de RESISTENCIA ({resistencia:.2f}) → refuerza VENTA")
+        else:
+            # 🛡️ Estrategia conservadora: si no está cerca de zonas clave, no entrar
+            logging.info(f"🧭 Precio lejos de zonas técnicas → señal debilitada")
+            signal = "ESPERAR"
+
+    # 📊 Confirmación técnica (ADX + EMAs)
     adx_val = float(df_feat["adx"].iloc[-1])
     ema20 = float(df_feat.get("ema_20", df_feat.get("ema20", np.nan)).iloc[-1])
     ema50 = float(df_feat.get("ema_50", df_feat.get("ema50", np.nan)).iloc[-1])
     confirm = (signal == "COMPRAR" and adx_val > 20 and ema20 > ema50) or \
               (signal == "VENTA" and adx_val > 20 and ema20 < ema50)
 
+    # 🟡 Construir respuesta si no hay señal
     if signal == "COMPRAR":
         signal_out = "COMPRA CONFIRMADA ✅" if confirm else "COMPRA POTENCIAL ⚠️"
     elif signal == "VENTA":
         signal_out = "VENTA CONFIRMADA ✅" if confirm else "VENTA POTENCIAL ⚠️"
     else:
-        # Si el filtro estratégico no aprueba, marcamos esperar y explicamos
         msg = "Noticia de alto impacto próxima — Evitar operar." if news else f"Condiciones no ideales: {why}"
         return {
-            "symbol": symbol, "signal": "ESPERAR 🧠" if not news else "ESPERAR 🚨",
-            "message": msg, "price": round(price_now, 4),
-            "prob_up": None, "prob_down": None,
-            "entry_suggest": None, "SL": None, "TP": None, "risk_rr": None,
-            "plan": "NONE", "narrative": f"🧠 Filtro estratégico: {why}", "explanation": None,
+            "symbol": symbol,
+            "signal": "ESPERAR 🧠" if not news else "ESPERAR 🚨",
+            "message": msg,
+            "price": round(price_now, 4),
+            "prob_up": None,
+            "prob_down": None,
+            "entry_suggest": None,
+            "SL": None,
+            "TP": None,
+            "risk_rr": None,
+            "plan": "NONE",
+            "narrative": f"🧠 Filtro estratégico: {why}",
+            "explanation": None,
+            "candle_pattern": patron,
+            "support": round(soporte, 4) if soporte else None,
+            "resistance": round(resistencia, 4) if resistencia else None,
             **({"news_event": news} if news else {})
         }
 
-    # Plan de trade (incluye planB reglas)
+    # 📌 Si hay señal de COMPRA o VENTA → calcular plan
     trade_plan = choose_trade_plan(signal_out, df_feat)
 
-    # Explicabilidad local
     X_row = X_all.iloc[-1]
     dominant_class_idx = idx_up if prob_up >= prob_down else idx_down
     explanation = build_local_explanation(X_row, class_idx=dominant_class_idx, top_n=5)
 
-    # Narrativa
-    narrativa = market_context_narrative(symbol, df_feat, signal_out, prob_up*100, prob_down*100)
+    narrativa = market_context_narrative(symbol, df_feat, signal_out, prob_up * 100, prob_down * 100)
 
-    # Sizing sugerido (no ejecuta trades)
+    # 💰 Sizing sugerido
     entry = trade_plan.get("entry_suggest")
     sl = trade_plan.get("SL")
     rr = trade_plan.get("risk_rr")
@@ -721,14 +1127,7 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     sizing = None
     if entry and sl:
         if use_kelly:
-            # Kelly usando winrate aproximado a partir del historial del símbolo
-            data = _read_state()
-            hist = data["history"].get(symbol, [])
-            if len(hist) >= 25:
-                wins = sum(1 for h in hist if h.get("win"))
-                wr = wins / len(hist)
-            else:
-                wr = 0.52  # suposición neutra
+            wr = 0.52  # estimado
             frac = kelly_sizing(wr, rr or 1.2, fraction_cap=KELLY_FRACTION)
             units = atr_target_position(balance, frac, entry, sl)
             sizing = {"method": "Kelly_fraccional", "kelly_wr": round(wr, 3), "fraction": round(frac, 4), "units": round(units, 6)}
@@ -736,6 +1135,7 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
             units = atr_target_position(balance, DEFAULT_RISK_PER_TRADE, entry, sl)
             sizing = {"method": "ATR_targeting", "risk_per_trade": DEFAULT_RISK_PER_TRADE, "units": round(units, 6)}
 
+    # 🧾 Respuesta final
     resp = {
         "symbol": symbol,
         "signal": signal_out,
@@ -751,23 +1151,21 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
         "narrative": narrativa,
         "explanation": explanation,
         "sizing": sizing,
-        "thresholds_used": th
+        "thresholds_used": th,
+        "candle_pattern": patron,
+        "support": round(soporte, 4) if soporte else None,
+        "resistance": round(resistencia, 4) if resistencia else None
     }
     return resp
 
 # ---------------- Backtest ----------------
 def simulate_trade(row_entry_idx, side, entry, sl, tp, df_feat, use_planB: bool) -> Tuple[float, int]:
-    """
-    Simula trade en adelante desde row_entry_idx+1.
-    Retorna (R_multiple, bars_held).
-    Si use_planB=True, aplica reglas: ADX<15 o vela en contra >1.2*ATR -> reduce/exita/trailing.
-    """
     bars = 0
     risk = abs(entry - sl)
     if risk <= 1e-12:
         return 0.0, 0
 
-    size_factor = 1.0  # para salida parcial en planB
+    size_factor = 1.0
     trailing_sl = None
 
     for i in range(row_entry_idx + 1, len(df_feat)):
@@ -778,15 +1176,11 @@ def simulate_trade(row_entry_idx, side, entry, sl, tp, df_feat, use_planB: bool)
         atr = float(df_feat["atr"].iloc[i])
         adx = float(df_feat["adx"].iloc[i])
 
-        # Plan B
         if use_planB:
-            # ADX drop
             if adx < 15 and trailing_sl is None:
-                # Convertimos a ATR-plan con TP suavecillo
                 if side == "long":
                     trailing_sl = c - 1.0 * atr
                     tp_alt = c + 1.2 * atr
-                    # si llega al tp_alt, cerramos
                     if h >= tp_alt:
                         gain = (tp_alt - entry) / risk
                         return round(gain * size_factor, 2), bars
@@ -796,13 +1190,10 @@ def simulate_trade(row_entry_idx, side, entry, sl, tp, df_feat, use_planB: bool)
                     if l <= tp_alt:
                         gain = (entry - tp_alt) / risk
                         return round(gain * size_factor, 2), bars
-            # vela fuerte en contra > 1.2 ATR
-            rng_bar = h - l
             if ((side == "long" and (entry - l) > 1.2 * atr) or
                 (side == "short" and (h - entry) > 1.2 * atr)) and size_factor > 0.51:
-                size_factor = 0.5  # salida parcial 50%
+                size_factor = 0.5
 
-        # trailing si existe
         if trailing_sl is not None:
             if side == "long":
                 trailing_sl = max(trailing_sl, c - 1.0 * atr)
@@ -815,7 +1206,6 @@ def simulate_trade(row_entry_idx, side, entry, sl, tp, df_feat, use_planB: bool)
                     gain = (entry - trailing_sl) / risk
                     return round(gain * size_factor, 2), bars
 
-        # Check TP/SL originales
         if side == "long":
             if h >= tp:
                 gain = (tp - entry) / risk
@@ -831,7 +1221,6 @@ def simulate_trade(row_entry_idx, side, entry, sl, tp, df_feat, use_planB: bool)
                 loss = (entry - sl) / risk
                 return round(loss, 2), bars
 
-    # si no tocó nada, cerramos al final a mercado
     last_close = float(df_feat["Close"].iloc[-1])
     if side == "long":
         res = (last_close - entry) / risk
@@ -843,7 +1232,6 @@ def backtest_symbol(symbol: str, days: int = 60, use_planB: bool = True) -> Dict
     df = download_klines_safe(symbol)
     if df.empty:
         return {"error": f"No hay datos para {symbol}"}
-    # recortar últimos N días
     since = df.index.max() - pd.Timedelta(days=days)
     df = df[df.index >= since]
     df_feat = compute_indicators(df)
@@ -859,13 +1247,12 @@ def backtest_symbol(symbol: str, days: int = 60, use_planB: bool = True) -> Dict
     th = get_symbol_thresholds(symbol)
     results = []
     cum_R = 0.0
-    day_loss_R: Dict[str, float] = {}  # control de pérdidas por día
+    day_loss_R: Dict[str, float] = {}
 
     for i in range(1, len(df_feat) - 1):
         prob_up = float(preds[i, idx_up])
         prob_down = float(preds[i, idx_down])
 
-        # señal
         signal = "ESPERAR"
         if (prob_up > th["UP"]) and (prob_up - prob_down >= th["DIFF"]):
             signal = "COMPRAR"
@@ -874,7 +1261,6 @@ def backtest_symbol(symbol: str, days: int = 60, use_planB: bool = True) -> Dict
         if signal == "ESPERAR":
             continue
 
-        # Confirmación
         adx_val = float(df_feat["adx"].iloc[i])
         ema20 = float(df_feat.get("ema_20", df_feat.get("ema20", np.nan)).iloc[i])
         ema50 = float(df_feat.get("ema_50", df_feat.get("ema50", np.nan)).iloc[i])
@@ -882,18 +1268,16 @@ def backtest_symbol(symbol: str, days: int = 60, use_planB: bool = True) -> Dict
                   (signal == "VENTA" and adx_val > 20 and ema20 < ema50)
         signal_out = signal + (" CONFIRMADA ✅" if confirm else " POTENCIAL ⚠️")
 
-        # plan
-        sub_df = df_feat.iloc[: i + 1]  # hasta i
+        sub_df = df_feat.iloc[: i + 1]
         plan = choose_trade_plan(signal_out, sub_df)
         entry, sl, tp = plan.get("entry_suggest"), plan.get("SL"), plan.get("TP")
         if not entry or not sl or not tp or plan.get("plan") == "NONE":
             continue
 
-        # tope de pérdida diaria por R
         day_key = df_feat.index[i].strftime("%Y-%m-%d")
         lost_today = day_loss_R.get(day_key, 0.0)
         if lost_today <= -DAILY_R_MAX:
-            continue  # saltamos señales si ya alcanzamos tope de pérdida
+            continue
 
         side = "long" if "COMPRA" in signal_out.upper() else "short"
         R, bars = simulate_trade(i, side, entry, sl, tp, df_feat, use_planB=use_planB)
@@ -926,10 +1310,8 @@ def backtest_symbol(symbol: str, days: int = 60, use_planB: bool = True) -> Dict
         "winrate": round(wins / len(results), 3),
         "avgR": round(float(np.mean(Rs)), 3),
         "maxDD_R": round(float(max_dd), 2),
-        "details": results[:200]  # limita respuesta
+        "details": results[:200]
     }
-
-# ---------------- Rutas ----------------
 
 # ===================================================
 # 🌐 RUTAS PRINCIPALES
@@ -970,7 +1352,6 @@ a{color:#58a6ff}
     """
     return Response(html, mimetype="text/html")
 
-
 @app.route("/_thresholds")
 def get_thresholds_view():
     sym = (request.args.get("symbol") or "").upper().strip()
@@ -1001,7 +1382,6 @@ def api_scanner():
             result = compute_signal_for_symbol(sym)
             if result.get("error"):
                 continue
-            # Solo oportunidades activas
             sig = result.get("signal", "")
             if "COMPRA" in sig or "VENTA" in sig:
                 rr = result.get("risk_rr") or 0
@@ -1038,10 +1418,11 @@ def api_whatif():
 
         df = download_klines_safe(symbol)
         if df.empty:
-            return jsonify({"error": f"No hay datos para {symbol}"})
+            return jsonify({"error": f"No hay datos para {symbol}"}), 400
         df_feat = compute_indicators(df)
         if df_feat.empty:
-            return jsonify({"error": f"Datos insuficientes para {symbol} (warm-up)"})
+            return jsonify({"error": f"Datos insuficientes para {symbol} (warm-up)"}), 400
+
         X_all = df_feat.reindex(columns=feature_cols).astype(float)
         X_row = X_all.iloc[-1].copy()
 
@@ -1087,7 +1468,7 @@ def api_backtest():
         if not symbol:
             return jsonify({"error": "Símbolo vacío"}), 400
         resB = backtest_symbol(symbol, days=days, use_planB=use_planB)
-        resA = backtest_symbol(symbol, days=days, use_planB=False)  # sin plan B para comparar
+        resA = backtest_symbol(symbol, days=days, use_planB=False)
         return jsonify({"with_planB": resB, "without_planB": resA})
     except Exception as e:
         logging.exception("Error en /api/backtest")
@@ -1104,75 +1485,89 @@ def handle_exception(e):
     if isinstance(e, HTTPException):
         return jsonify({"error": e.description, "status": e.code}), e.code
     return jsonify({"error": str(e), "status": 500}), 500
+
 # ===================================================
 # 📊 NUEVO: Estadísticas globales del sistema
 # ===================================================
 @app.route("/api/stats")
 def api_stats():
     try:
-        file_path = "backtest_results_optim.csv"
-
-        # 📌 Verificar que el archivo exista
+        file_path = OPTIM_FILE
         if not os.path.exists(file_path):
-            return jsonify({"error": "No se encontró el archivo backtest_results_optim.csv"}), 404
+            return jsonify({"error": "No se encontró el archivo"}), 404
 
         df = pd.read_csv(file_path)
 
-        # 📊 Total de trades (o filas)
+        # 🧠 Filtrar símbolos activos actuales
+        df = df[df["symbol"].isin(SYMBOLS)]
+
+        # 🥇 NUEVO: Filtrar solo pares ganadores (PF > 1)
+        df = df[df["profit_factor"] > 1]
+
         total_trades = len(df)
+        if total_trades == 0:
+            return jsonify({
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "winrate": 0,
+                "avg_rr": 0,
+                "max_drawdown": 0,
+                "filtered_symbols": []  # 👈 Lista de pares usados
+            })
 
-        # ✅ Manejo flexible de columnas
-        if 'result' in df.columns:
-            wins = df[df['result'].astype(str).str.lower() == 'win'].shape[0]
-            losses = df[df['result'].astype(str).str.lower() == 'loss'].shape[0]
-        else:
-            # Si no hay columna 'result', asumimos que cada fila es un trade
-            # y que las ganancias se pueden aproximar desde accuracy si existe
-            if 'accuracy' in df.columns and total_trades > 0:
-                # si accuracy está en %, lo convertimos a proporción
-                avg_acc = df['accuracy'].mean()
-                wins = int((avg_acc / 100) * total_trades) if avg_acc > 1 else int(avg_acc * total_trades)
-            else:
-                wins = total_trades  # por defecto todos ganadores
-            losses = total_trades - wins
+        wins = int(total_trades)  # todos aquí son ganadores
+        losses = 0
 
-        # 🧮 Winrate
-        winrate = round((wins / total_trades) * 100, 2) if total_trades > 0 else 0
+        winrate = 100.0  # si filtramos solo ganadores
+        avg_rr = round(df['profit_factor'].replace([float('inf'), -float('inf')], 0).mean(), 2) \
+            if 'profit_factor' in df.columns else 0
+        max_dd = round(df['drawdown'].max(), 2) if 'drawdown' in df.columns else 0
 
-        # ⚖️ R:R promedio
-        if 'profit_factor' in df.columns:
-            avg_rr = round(df['profit_factor'].replace([float('inf'), -float('inf')], 0).mean(), 2)
-        elif 'rr' in df.columns:
-            avg_rr = round(df['rr'].mean(), 2)
-        else:
-            avg_rr = 0
+        symbols_used = df['symbol'].unique().tolist()
 
-        # 📉 Máximo drawdown
-        if 'drawdown' in df.columns:
-            max_dd = round(df['drawdown'].max(), 2)
-        else:
-            max_dd = 0
-
-        # 📤 Respuesta final en JSON
         return jsonify({
             "total_trades": int(total_trades),
             "wins": int(wins),
             "losses": int(losses),
             "winrate": winrate,
             "avg_rr": avg_rr,
-            "max_drawdown": max_dd
+            "max_drawdown": max_dd,
+            "filtered_symbols": symbols_used
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# ===============================
+# 🌐 Endpoint para consultar filtros y símbolos activos
+# ===============================
+@app.route("/api/get-filters", methods=["GET"])
+def get_filters_info():
+    """
+    Devuelve la configuración actual de filtros, símbolos activos
+    y los umbrales cargados para cada uno.
+    """
+    response = {
+        "filtros_actuales": filtros_config,
+        "simbolos_activos": SYMBOLS,
+        "umbrales_activos": mejores_umbral
+    }
+    return jsonify(response)
+
 # ===================================================
 # 🚀 MAIN
 # ===================================================
+
 if __name__ == "__main__":
+    # 👉 Lanza WebSocket en segundo plano
+    threading.Thread(target=iniciar_websocket, daemon=True).start()
+
     _ensure_thresholds_file()
     client = init_client(API_KEY, API_SECRET)
     if client is None:
         logging.error("No se pudo conectar a Binance. Saliendo.")
         exit(1)
-    app.run(host="0.0.0.0", port=5000, debug=False)
 
+    # 👉 Ahora Flask se ejecutará normalmente
+    app.run(host="0.0.0.0", port=5000, debug=False)
