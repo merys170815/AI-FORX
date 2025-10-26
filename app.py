@@ -90,19 +90,22 @@ MODEL_FILE = "binance_ai_lgbm_optuna_multi_v2_multiclass.pkl"
 THRESHOLD_STATE_FILE = "thresholds_state.json"
 OPTIM_FILE = "backtest_results_optim.csv"
 
-BASE_UP_THRESHOLD   = 0.55  # ↑ antes 0.50
-BASE_DOWN_THRESHOLD = 0.55  # ↑ antes 0.50
-BASE_DIFF_MARGIN    = 0.03  # ↑ antes 0.02
+# ——— UMBRALES —
+BASE_UP_THRESHOLD   = 0.52   # 📉 un poco más bajo → permite más señales buenas
+BASE_DOWN_THRESHOLD = 0.52
+BASE_DIFF_MARGIN    = 0.025  # margen moderado → evita falsas señales, sin ser tan restrictivo
+MAX_THRESHOLD       = 0.80   # ✅ lo dejamos igual
+MIN_THRESHOLD       = 0.42   # 📉 un poquito menos restrictivo que 0.45
 
-MAX_THRESHOLD       = 0.80
-MIN_THRESHOLD       = 0.40  # ↑ antes 0.40
+
 
 # 📊 Filtros de mercado
-MIN_ATR_RATIO     = 0.00012  # ↔️ era más sensible a volatilidad
-MIN_ADX           = 10       # ↔️ menos estricto
-MIN_RANGE_RATIO   = 0.0012   # ↔️ filtraba menos, pero suficiente
-FIB_LOOKBACK      = 60
-SL_BUFFER_ATR_MULT = 0.30
+MIN_ATR_RATIO = 0.00015   # ⚖️ sube un poco desde 0.0001 (mejor volatilidad mínima)
+MIN_ADX       = 11        # ⚖️ sube ligeramente, sin ser tan agresivo como 12
+MIN_RANGE_RATIO = 0.0015  # ⚖️ filtra rangos muy estrechos, pero deja pasar movimientos suaves
+FIB_LOOKBACK = 60         # ✅ bien, lo dejamos igual
+SL_BUFFER_ATR_MULT = 0.22 # ⚖️ un pequeño margen extra para evitar stops falsos
+
 
 TE_API_KEY = os.getenv("TE_API_KEY") or ""
 NEWS_LOOKAHEAD_MIN = 30
@@ -1508,22 +1511,27 @@ def get_thresholds_view():
         return jsonify({"error": "symbol requerido"}), 400
     return jsonify({"symbol": sym, "thresholds": get_symbol_thresholds(sym)})
 
-@app.route("/api/ask", methods=["POST"])
+@app.route("/api/ask", methods=["GET", "POST"])
 def api_ask():
     try:
-        data = request.get_json(force=True, silent=True) or {}
-        symbol = (data.get("symbol") or "").upper().strip()
+        if request.method == "POST":
+            data = request.get_json(force=True, silent=True) or {}
+            symbol = (data.get("symbol") or "").upper().strip()
+        else:
+            # ✅ Soporte para GET
+            symbol = (request.args.get("symbol") or "").upper().strip()
+
         if not symbol:
             return jsonify({"error": "Símbolo vacío"}), 400
 
-        balance = float(data.get("balance", DEFAULT_BALANCE))
-        use_kelly = bool(data.get("use_kelly", False))
+        balance = float(data.get("balance", DEFAULT_BALANCE)) if request.method == "POST" else DEFAULT_BALANCE
+        use_kelly = bool(data.get("use_kelly", False)) if request.method == "POST" else False
 
         resp = compute_signal_for_symbol(symbol, balance=balance, use_kelly=use_kelly)
         print("DEBUG RESP INICIAL:", resp)
 
         # 🆕 Si no hay df, lo descargamos ahora
-        df = download_klines_safe(symbol, INTERVAL)  # Usa tu propia función para obtener velas
+        df = download_klines_safe(symbol, INTERVAL)
 
         if not df.empty:
             signal = resp.get("signal", "")
@@ -1560,12 +1568,6 @@ def api_ask():
     except Exception as e:
         logging.exception("Error en /api/ask")
         return jsonify({"error": str(e)}), 500
-
-
-
-from datetime import datetime
-
-last_scan_time = None  # 👈 variable global para guardar la hora del último escaneo
 
 @app.get("/api/scanner")
 def api_scanner():

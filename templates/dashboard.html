@@ -37,6 +37,7 @@
 
   .chart-container { margin-top: 20px; position: relative; height: 300px; }
 
+  /* 📝 Bloque narrativa */
   .narrative-block {
     margin-top: 15px;
     padding: 15px;
@@ -80,6 +81,7 @@
     </div>
   </header>
 
+  <!-- 📊 Paper Trading Stats -->
   <div id="paper-stats" style="text-align:center;margin-top:15px;color:#58a6ff;font-size:16px;">
     💰 Balance: $0 | 📊 Trades: 0 | 🏆 Winrate: 0%
   </div>
@@ -111,6 +113,7 @@
   <footer>© 2025 Trading IA Pro — Inteligencia + Estrategia 📈</footer>
 
 <script>
+let ultimoTop3 = null;
 let chart = null;
 let statsChart = null;
 
@@ -128,16 +131,14 @@ async function cargarScanner() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
 
-    const signals = data.signals || [];
-    if (signals.length === 0) {
+    if (!Array.isArray(data) || data.length === 0) {
       box.innerHTML = "⚠️ No hay oportunidades activas ahora.";
-      document.getElementById("last-update").innerText =
-        "⏰ Última actualización: " + (data.last_updated || "—");
+      ultimoTop3 = null;
       return;
     }
 
     let html = "";
-    signals.forEach((op, i) => {
+    data.forEach((op, i) => {
       const rrClass = op.risk_rr >= 2 ? "rr-high" : op.risk_rr >= 1 ? "rr-medium" : "rr-low";
       const color = op.signal.includes('VENTA') ? 'var(--red)' : 'var(--green)';
       html += `
@@ -149,10 +150,8 @@ async function cargarScanner() {
           <p>⚖️ <span class="${rrClass}">${op.risk_rr}</span> R:R | 🧭 ${op.plan}</p>
         </div>`;
     });
-
     box.innerHTML = html;
-    document.getElementById("last-update").innerText =
-      "⏰ Última actualización: " + (data.last_updated || "—");
+    document.getElementById("last-update").innerText = "⏰ " + new Date().toLocaleTimeString();
   } catch (err) {
     box.innerHTML = "❌ Error al escanear: " + escapeHTML(err.message);
   }
@@ -194,6 +193,71 @@ function renderStatsChart(data) {
   });
 }
 
+// ==================== 🧠 Señales individuales ====================
+async function consultarSimbolo() {
+  const symbol = document.getElementById("symbol-input").value.trim().toUpperCase();
+  const box = document.getElementById("respuesta-consulta");
+  box.style.display = "block";
+  box.className = "alert-strat";
+  box.innerHTML = "⏳ Analizando " + (symbol || "—") + "...";
+
+  if (!symbol) { box.innerHTML = "⚠️ Ingresa un símbolo válido."; return; }
+
+  try {
+    const res = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+
+    if (data.signal?.includes("COMPRA")) { box.className = "alert-buy"; document.body.style.background = "#002b14"; }
+    else if (data.signal?.includes("VENTA")) { box.className = "alert-sell"; document.body.style.background = "#300000"; }
+    else { box.className = "alert-news"; document.body.style.background = "#2f2f15"; }
+
+    let html = `
+      <h2>${data.symbol}</h2>
+      <p>📈 Señal: <strong>${data.signal}</strong></p>
+      <p>🔼 Prob ↑: ${data.prob_up}% | 🔽 Prob ↓: ${data.prob_down}%</p>
+      <p>💰 Precio actual: ${fmt(data.price)}</p>
+    `;
+
+    if (data.entry_suggest) html += `<p>🎯 Entrada: ${fmt(data.entry_suggest)}</p>`;
+    if (data.SL) html += `<p>🛑 Stop Loss: ${fmt(data.SL)}</p>`;
+    if (data.TP) html += `<p>🏁 Take Profit: ${fmt(data.TP)}</p>`;
+    if (data.technical_message) html += `<p>📢 ${escapeHTML(data.technical_message)}</p>`;
+
+    if (data.risk_rr) {
+      const rrClass = data.risk_rr >= 2 ? "rr-high" : data.risk_rr >= 1 ? "rr-medium" : "rr-low";
+      html += `<p>⚖️ R:R: <span class="${rrClass}">${data.risk_rr}</span></p>`;
+    }
+
+    if (data.plan) html += `<p>🧭 Plan de Trade: ${data.plan}</p>`;
+
+    // 📝 Narrativa explicativa
+    if (data.narrative || data.support || data.resistance || data.candle_pattern) {
+      html += `
+        <div class="narrative-block">
+          <h3>📝 Explicación de la señal</h3>
+          <p>${escapeHTML(data.narrative || "Sin explicación generada por IA.")}</p>
+          <ul>
+            ${data.candle_pattern ? `<li>🕯 Patrón detectado: <b>${escapeHTML(data.candle_pattern)}</b></li>` : ""}
+            ${data.support ? `<li>📉 Soporte cercano: <b>${fmt(data.support)}</b></li>` : ""}
+            ${data.resistance ? `<li>📈 Resistencia cercana: <b>${fmt(data.resistance)}</b></li>` : ""}
+          </ul>
+        </div>
+      `;
+    }
+
+    box.innerHTML = html;
+    renderChart(data);
+  } catch (err) {
+    box.className = "alert-news";
+    box.innerHTML = `❌ Error: ${escapeHTML(err.message)}`;
+  }
+}
+
 // ==================== 📢 Paper Trading Stats ====================
 async function cargarPaperStats() {
   try {
@@ -208,11 +272,28 @@ async function cargarPaperStats() {
   }
 }
 
+function renderChart(data) {
+  const container = document.querySelector(".chart-container");
+  container.style.display = (data.entry_suggest && data.SL && data.TP) ? "block" : "none";
+  if (container.style.display !== "block") return;
+  const ctx = document.getElementById("tradeChart").getContext("2d");
+  const labels = ["SL", "Entrada", "TP"];
+  const values = [data.SL, data.entry_suggest, data.TP];
+  const colors = ["#ff4d4d", "#58a6ff", "#00ff88"];
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ label: `Niveles de precio (${data.symbol})`, data: values, backgroundColor: colors }] },
+    options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${fmt(c.raw)}` } } }, scales: { y: { beginAtZero: false } } }
+  });
+}
+
 window.addEventListener("load", () => {
   cargarScanner();
   cargarStats();
   cargarPaperStats();
   setInterval(cargarPaperStats, 5000);
+  if (Notification.permission !== "granted") Notification.requestPermission();
 });
 </script>
 </body>
