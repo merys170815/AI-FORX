@@ -22,9 +22,21 @@ from math import isnan
 from logger_trades import log_trade
 from trade_engine import open_trade
 from trade_engine import get_stats
+from adaptive_learning import start_learning_thread
+from flask import Flask, jsonify, request, send_from_directory
+from bot import simulate_trade
+
 
 
 app = Flask(__name__)
+
+# =========================
+# 💰 PAPER TRADING (Simulado)
+# =========================
+paper_balance = 10000.0   # Balance inicial
+paper_trades = []         # Historial de operaciones simuladas
+paper_winrate = 0.0
+
 
 # ---------------- CONFIG GLOBAL ----------------
 API_KEY = os.getenv("API_KEY") or "TU_API_KEY_REAL"
@@ -78,18 +90,19 @@ MODEL_FILE = "binance_ai_lgbm_optuna_multi_v2_multiclass.pkl"
 THRESHOLD_STATE_FILE = "thresholds_state.json"
 OPTIM_FILE = "backtest_results_optim.csv"
 
-BASE_UP_THRESHOLD = 0.55
-BASE_DOWN_THRESHOLD = 0.55
-BASE_DIFF_MARGIN = 0.05
-MAX_THRESHOLD = 0.80
-MIN_THRESHOLD = 0.40
+BASE_UP_THRESHOLD   = 0.55  # ↑ antes 0.50
+BASE_DOWN_THRESHOLD = 0.55  # ↑ antes 0.50
+BASE_DIFF_MARGIN    = 0.03  # ↑ antes 0.02
 
-# Filtros de mercado
-MIN_ATR_RATIO = 0.0003
-MIN_ADX = 15
-FIB_LOOKBACK = 60
-SL_BUFFER_ATR_MULT = 0.2
-MIN_RANGE_RATIO = 0.003
+MAX_THRESHOLD       = 0.80
+MIN_THRESHOLD       = 0.40  # ↑ antes 0.40
+
+# 📊 Filtros de mercado
+MIN_ATR_RATIO     = 0.00012  # ↔️ era más sensible a volatilidad
+MIN_ADX           = 10       # ↔️ menos estricto
+MIN_RANGE_RATIO   = 0.0012   # ↔️ filtraba menos, pero suficiente
+FIB_LOOKBACK      = 60
+SL_BUFFER_ATR_MULT = 0.30
 
 TE_API_KEY = os.getenv("TE_API_KEY") or ""
 NEWS_LOOKAHEAD_MIN = 30
@@ -131,23 +144,41 @@ filtros_config = {
     "max_drawdown": 0.20
 }
 
+# 🟡 Lista por defecto si no hay archivo
+DEFAULT_SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+
+# ===============================
+# 📥 Filtro de símbolos basado en PF / Accuracy / DD
+# ===============================
 def get_symbols_with_filters(file=OPTIM_FILE):
-    """Filtra símbolos según PF, accuracy y drawdown usando filtros_config."""
+    """
+    Filtra símbolos según PF, accuracy y drawdown usando filtros_config.
+    Si no hay archivo o ninguno pasa, usa lista por defecto.
+    """
     if not os.path.exists(file):
         logging.warning(f"⚠️ No se encontró {file}, usando símbolos por defecto.")
-        return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+        return DEFAULT_SYMBOLS
 
     try:
         df = pd.read_csv(file)
+
         filtered = df[
             (df["profit_factor"] >= filtros_config["min_pf"]) &
             (df["accuracy"] >= filtros_config["min_accuracy"]) &
             (df["drawdown"] <= filtros_config["max_drawdown"])
         ]
+
         good = filtered["symbol"].tolist()
+
+        # 🔸 Logging de exclusiones (útil para depurar)
+        for _, row in df.iterrows():
+            sym = row["symbol"]
+            if sym not in good:
+                logging.info(f"🚫 {sym} excluido por PF={row['profit_factor']:.3f}, ACC={row['accuracy']}%, DD={row['drawdown']}")
+
         if not good:
-            logging.warning("⚠️ Ningún símbolo cumple los filtros, usando lista completa.")
-            return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+            logging.warning("⚠️ Ningún símbolo cumple los filtros, usando lista por defecto.")
+            return DEFAULT_SYMBOLS
 
         logging.info(
             f"✅ Símbolos filtrados — PF ≥ {filtros_config['min_pf']}, "
@@ -155,15 +186,14 @@ def get_symbols_with_filters(file=OPTIM_FILE):
             f"Drawdown ≤ {filtros_config['max_drawdown']}: {good}"
         )
         return good
+
     except Exception as e:
         logging.error(f"❌ Error leyendo {file}: {e}")
-        return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
+        return DEFAULT_SYMBOLS
 
-# 🔹 Inicializar símbolos activos al iniciar la app
-SYMBOLS = get_symbols_with_filters()
 
 # ===============================
-# 📥 Carga de umbrales por símbolo
+# 📊 Cargar mejores umbrales solo para símbolos activos
 # ===============================
 mejores_umbral: Dict[str, Dict[str, float]] = {}
 
@@ -196,16 +226,15 @@ def cargar_mejores_umbral():
         mejores_umbral = {}
         return mejores_umbral
 
-cargar_mejores_umbral()
 
 # ===============================
-# ♻️ Refresco periódico
+# ♻️ Refresco automático de filtros y umbrales
 # ===============================
 def refrescar_filtros_periodicamente():
+    global SYMBOLS
     while True:
         try:
             logging.info("♻️ [AUTO] Actualizando símbolos y umbrales óptimos...")
-            global SYMBOLS
             SYMBOLS = get_symbols_with_filters()
             cargar_mejores_umbral()
             logging.info(f"✅ [AUTO] Actualización completada — Símbolos: {SYMBOLS}")
@@ -213,10 +242,14 @@ def refrescar_filtros_periodicamente():
             logging.error(f"❌ Error en actualización automática: {e}")
         time.sleep(REFRESH_INTERVAL)
 
-# 🟢 Lanzar el hilo en segundo plano después de definir TODO
+
+# 🔹 Inicializar símbolos activos al iniciar la app
+SYMBOLS = get_symbols_with_filters()
+cargar_mejores_umbral()
+
+# 🟢 Lanzar refresco en segundo plano
 t = threading.Thread(target=refrescar_filtros_periodicamente, daemon=True)
 t.start()
-
 # ========= Helpers de thresholds JSON mínimos =========
 def _ensure_thresholds_file():
     if not os.path.exists(THRESHOLD_STATE_FILE):
@@ -328,37 +361,6 @@ def get_symbols_with_filters(file=OPTIM_FILE):
 # 🔹 Inicializar símbolos activos al iniciar la app
 SYMBOLS = get_symbols_with_filters()
 
-# ===============================
-# 🌐 Endpoint para actualizar filtros dinámicamente
-# ===============================
-@app.route("/api/update-filter", methods=["POST"])
-def update_filter():
-    """
-    Permite actualizar filtros dinámicamente sin reiniciar el servidor.
-    Ejemplo body:
-    {
-        "min_pf": 1.8,
-        "min_accuracy": 55,
-        "max_drawdown": 0.15
-    }
-    """
-    global SYMBOLS
-    data = request.get_json(force=True) or {}
-
-    # Actualizar valores existentes si vienen en la petición
-    for key in filtros_config:
-        if key in data:
-            filtros_config[key] = float(data[key])
-
-    # Volver a filtrar símbolos según nuevos parámetros
-    SYMBOLS = get_symbols_with_filters()
-
-    return jsonify({
-        "status": "✅ Filtros actualizados correctamente",
-        "filtros": filtros_config,
-        "active_symbols": SYMBOLS
-    })
-
 def cargar_mejores_umbral():
     """
     Lee el archivo backtest_results_optim.csv y carga los mejores umbrales
@@ -405,12 +407,16 @@ def get_best_threshold(symbol: str) -> Dict[str, float]:
     # ⚠️ Esto cubre casos extremos si se consulta un símbolo no filtrado
     return {"UP": BASE_UP_THRESHOLD, "DOWN": BASE_DOWN_THRESHOLD, "DIFF": BASE_DIFF_MARGIN}
 
+
+
 # compatibilidad para endpoint /_thresholds y backtest
 def get_symbol_thresholds(sym: str) -> Dict[str, float]:
     return get_best_threshold(sym)
 
 # 🧠 Cargar una vez al iniciar la app
 cargar_mejores_umbral()
+
+
 
 # =========================================================
 # 🔁 Endpoint para recargar umbrales dinámicamente
@@ -419,44 +425,80 @@ cargar_mejores_umbral()
 def reload_thresholds():
     cargar_mejores_umbral()
     return jsonify({"status": "✅ Umbrales recargados", "data": mejores_umbral})
+# ===============================
+# ⚡ Inicializar cliente Binance con reintentos + Descarga segura de velas
+# ===============================
 
-# ---------------- Binance ----------------
+client = None  # 👈 variable global
+
 def init_client(api_key, api_secret, max_retries=5, backoff=2):
+    """
+    Inicializa el cliente de Binance Futures con reintentos automáticos.
+    Si la conexión es exitosa, guarda el cliente globalmente.
+    """
+    global client
     for attempt in range(max_retries):
         try:
             c = Client(api_key, api_secret)
             c.futures_ping()
+            client = c  # 👈 guarda en la variable global
             logging.info("✅ Conectado correctamente a Binance Futures.")
-            return c
+            return client
         except Exception as e:
-            logging.warning(f"Intento {attempt + 1} fallido conectando a Binance: {e}")
+            logging.warning(f"❌ Intento {attempt + 1} fallido conectando a Binance: {e}")
             if attempt < max_retries - 1:
                 sleep_time = backoff ** attempt + np.random.uniform(0, 1)
-                logging.info(f"Reintentando en {sleep_time:.2f} segundos...")
+                logging.info(f"🔁 Reintentando en {sleep_time:.2f} segundos...")
                 time.sleep(sleep_time)
             else:
                 logging.error("⚠️ No se pudo conectar a Binance después de varios intentos.")
+                client = None
                 return None
 
-def download_klines_safe(sym):
+def download_klines_safe(sym, interval=None, limit=None):
+    """
+    📥 Descarga velas seguras desde Binance Futures con manejo de errores.
+    Usa el cliente global actual en el momento de la llamada.
+    """
+    global client
+
+    # 👇 Validación dinámica: usa el client actual
+    if client is None:
+        logging.error("🚨 Cliente de Binance no inicializado.")
+        return pd.DataFrame()
+
     try:
-        kl = client.futures_klines(symbol=sym, interval=INTERVAL, limit=HISTORICAL_LIMIT)
+        interval = interval or INTERVAL
+        limit = limit or HISTORICAL_LIMIT
+
+        kl = client.futures_klines(symbol=sym, interval=interval, limit=limit)
         if not kl:
+            logging.warning(f"⚠️ No se recibieron datos de velas para {sym}")
             return pd.DataFrame()
+
         df = pd.DataFrame(kl, columns=[
             "Open_time", "Open", "High", "Low", "Close", "Volume", "Close_time",
             "Quote_asset_volume", "Number_of_trades", "Taker_buy_base", "Taker_buy_quote", "Ignore"
         ])
-        for c in ["Open","High","Low","Close","Volume"]:
+
+        for c in ["Open", "High", "Low", "Close", "Volume"]:
             df[c] = df[c].astype(float)
+
         df["Open_time"] = pd.to_datetime(df["Open_time"], unit="ms")
         df.set_index("Open_time", inplace=True)
-        return df.ffill().bfill()
-    except Exception as e:
-        logging.error(f"Error descargando datos de {sym}: {e}")
-        return pd.DataFrame()
 
-# ---------------- Noticias económicas ----------------
+        df["atr"] = ta.volatility.AverageTrueRange(
+            df["High"], df["Low"], df["Close"], window=14
+        ).average_true_range()
+
+        return df.ffill().bfill()
+
+    except Exception as e:
+        logging.error(f"❌ Error descargando datos de {sym}: {e}")
+        return pd.DataFrame()
+# ===============================
+# 📰 Noticias económicas
+# ===============================
 def hay_noticia_importante_proxima():
     try:
         url = "https://api.tradingeconomics.com/calendar"
@@ -480,17 +522,48 @@ def hay_noticia_importante_proxima():
                 event_time = parser.isoparse(event_time_str).astimezone(timezone.utc)
             except Exception:
                 continue
-
             if now <= event_time <= limit_time:
-                event_name = evento.get("Event", "Evento económico")
-                country = evento.get("Country", "Desconocido")
-                hora_str = event_time.strftime("%H:%M UTC")
-                logging.warning(f"🚨 Noticia detectada: {event_name} ({hora_str}) [{country}]")
-                return {"event": event_name, "country": country, "time": hora_str}
+                return {
+                    "event": evento.get("Event", ""),
+                    "country": evento.get("Country", ""),
+                    "time": event_time.strftime("%H:%M UTC")
+                }
         return None
-    except Exception as e:
-        logging.warning(f"Error revisando noticias: {e}")
+    except Exception:
         return None
+
+# ===============================
+# 📊 Umbrales dinámicos según condiciones del mercado
+# ===============================
+def get_dynamic_thresholds(adx_value: float, atr_ratio: float, has_news: bool):
+    up = BASE_UP_THRESHOLD
+    down = BASE_DOWN_THRESHOLD
+    diff = BASE_DIFF_MARGIN
+
+    # 📈 Tendencia fuerte — modo agresivo
+    if adx_value > 25 and atr_ratio > MIN_ATR_RATIO * 2 and not has_news:
+        up -= 0.05
+        down -= 0.05
+        diff -= 0.02
+    # 🧱 Lateral / baja vol / noticias — modo defensivo
+    elif adx_value < 15 or atr_ratio < MIN_ATR_RATIO or has_news:
+        up += 0.05
+        down += 0.05
+        diff += 0.02
+
+    up = min(MAX_THRESHOLD, max(MIN_THRESHOLD, up))
+    down = min(MAX_THRESHOLD, max(MIN_THRESHOLD, down))
+    diff = max(0.0, diff)
+    return {"UP": up, "DOWN": down, "DIFF": diff}
+
+# ===============================
+# 🧭 Soporte y resistencia inteligente
+# ===============================
+def detectar_zonas_sr(df, lookback=50):
+    sub = df.iloc[-lookback:]
+    soporte = sub["Low"].min()
+    resistencia = sub["High"].max()
+    return soporte, resistencia
 
 # ---------------- Modelo ----------------
 def _guess_is_tree_model(m):
@@ -917,62 +990,104 @@ def choose_trade_plan(signal, df_feat):
         "if_big_counter": "Si vela en contra > 1.2*ATR, reducir 50% posición y activar trailing ATR 1x."
     }
     return plan
-
-def market_context_narrative(symbol, df, signal, prob_up_pct, prob_down_pct, soporte=None, resistencia=None, patron=None, trade_plan=None, news=None):
+def market_context_narrative(
+    symbol,
+    df,
+    signal,
+    prob_up_pct,
+    prob_down_pct,
+    soporte=None,
+    resistencia=None,
+    patron=None,
+    trade_plan=None,
+    news=None
+):
     try:
-        price = df["Close"].iloc[-1]
+        # Contexto base
+        price = float(df["Close"].iloc[-1])
         regime = "lateral"
+
         ema20 = ta.trend.EMAIndicator(df["Close"], window=20).ema_indicator().iloc[-1]
         ema50 = ta.trend.EMAIndicator(df["Close"], window=50).ema_indicator().iloc[-1]
         adx = ta.trend.ADXIndicator(df["High"], df["Low"], df["Close"]).adx().iloc[-1]
-        bb_width = (df["High"].iloc[-20:].max() - df["Low"].iloc[-20:].min()) / price
 
-        # 📈 Detectar tendencia
+        # Ancho simple de rango reciente (20 velas)
+        recent_high = float(df["High"].iloc[-20:].max())
+        recent_low = float(df["Low"].iloc[-20:].min())
+        bb_width = (recent_high - recent_low) / max(price, 1e-9)
+
+        # Régimen
         if ema20 > ema50 and adx > 20 and bb_width > 0.015:
             regime = "alcista"
         elif ema20 < ema50 and adx > 20 and bb_width > 0.015:
             regime = "bajista"
 
-        narr = f"📊 {symbol} — Precio: {price:.2f} | Prob↑ {prob_up_pct:.2f}% | Prob↓ {prob_down_pct:.2f}% | Régimen: {regime}. "
+        narr = (
+            f"{symbol} — Precio: {price:.2f} | "
+            f"Prob↑ {prob_up_pct:.2f}% | Prob↓ {prob_down_pct:.2f}% | "
+            f"Regimen: {regime}. "
+        )
 
-        # 📰 Noticias relevantes
+        # Noticias
         if news:
-            narr += f"🚨 Noticia económica relevante próxima: {news.get('event', 'Evento')} en {news.get('time', '')} ({news.get('country', '')}). "
-            narr += "Se recomienda evitar operar hasta que pase la volatilidad. "
+            ev = news.get("event", "Evento")
+            tm = news.get("time", "")
+            ct = news.get("country", "")
+            narr += f"Noticia de alto impacto proxima: {ev} a las {tm} ({ct}). Evitar operar hasta que pase. "
 
-        # 📍 Soporte / resistencia
-        if soporte and abs(price - soporte) <= df["atr"].iloc[-1]:
-            narr += f"Precio cerca de soporte ({soporte:.2f}). "
-        elif resistencia and abs(price - resistencia) <= df["atr"].iloc[-1]:
-            narr += f"Precio cerca de resistencia ({resistencia:.2f}). "
+        # Soporte/Resistencia cercanos
+        atr_margin = float(df["atr"].iloc[-1]) if "atr" in df.columns else 0.0
+        if soporte is not None and abs(price - float(soporte)) <= atr_margin:
+            narr += f"Precio cerca de soporte ({float(soporte):.2f}). "
+        if resistencia is not None and abs(price - float(resistencia)) <= atr_margin:
+            narr += f"Precio cerca de resistencia ({float(resistencia):.2f}). "
 
-        # 🕯 Patrón de vela
+        # Patrones de vela: guía operativa simple
         if patron:
-            if patron == "DOJI":
-                narr += f"Patrón {patron} detectado (indecisión). "
-            else:
-                narr += f"Patrón {patron} detectado (posible confirmación). "
+            if patron == "HAMMER":
+                narr += "Patron HAMMER: posible rebote tras caida. Esperar vela alcista de confirmacion o ruptura de maximo previo. "
+            elif patron == "SHOOTING_STAR":
+                narr += "Patron SHOOTING STAR: posible agotamiento alcista. Vigilar rechazo en resistencia o ruptura a la baja. "
+            elif patron == "DOJI":
+                narr += "Patron DOJI: indecision. Esperar ruptura clara de soporte/resistencia antes de entrar. "
+            elif patron == "BULLISH_ENGULFING":
+                narr += "Patron BULLISH ENGULFING: sesgo alcista. Ruptura de resistencia podria validar entrada long. "
+            elif patron == "BEARISH_ENGULFING":
+                narr += "Patron BEARISH ENGULFING: sesgo bajista. Ruptura de soporte podria validar entrada short. "
 
-        # 📈 Señales según decisión
-        if "COMPRA" in signal.upper():
-            narr += "🟢 Señal de COMPRA — condiciones técnicas alineadas. "
+        # Señal final y plan, si existe
+        sig_up = "COMPRA" in str(signal).upper()
+        sig_dn = "VENTA" in str(signal).upper()
+
+        if sig_up:
+            narr += "Senal de COMPRA. "
             if trade_plan:
-                narr += f"Entrada sugerida: {trade_plan.get('entry_suggest')} | SL: {trade_plan.get('SL')} | TP: {trade_plan.get('TP')}. "
-        elif "VENTA" in signal.upper():
-            narr += "🔴 Señal de VENTA — presión bajista detectada. "
+                narr += (
+                    f"Entrada: {trade_plan.get('entry_suggest')} | "
+                    f"SL: {trade_plan.get('SL')} | "
+                    f"TP: {trade_plan.get('TP')}. "
+                )
+        elif sig_dn:
+            narr += "Senal de VENTA. "
             if trade_plan:
-                narr += f"Entrada sugerida: {trade_plan.get('entry_suggest')} | SL: {trade_plan.get('SL')} | TP: {trade_plan.get('TP')}. "
+                narr += (
+                    f"Entrada: {trade_plan.get('entry_suggest')} | "
+                    f"SL: {trade_plan.get('SL')} | "
+                    f"TP: {trade_plan.get('TP')}. "
+                )
         else:
-            narr += "🧠 Estrategia en espera — sin confirmación clara de entrada. "
+            narr += "Estrategia en espera, sin confirmacion clara. "
             if patron == "DOJI":
-                narr += "El patrón actual sugiere indecisión. "
-            if soporte or resistencia:
-                narr += "Esperando ruptura o confirmación en zona clave. "
+                narr += "El patron sugiere indecision; mejor esperar ruptura. "
+            if (soporte is not None) or (resistencia is not None):
+                narr += "Esperando ruptura o confirmacion en zona clave. "
 
         return narr
+
     except Exception as e:
         logging.warning(f"Error narrativa {symbol}: {e}")
         return f"{symbol}: contexto no disponible."
+
 
 
 # ---------------- Gestión de riesgo ----------------
@@ -1007,66 +1122,8 @@ def get_class_index(classes, value):
     if alt_val in classes:
         return classes.index(alt_val)
     raise ValueError(f"Clase {value} no encontrada en modelo (clases={classes})")
-def simulate_scenarios(symbol: str, X_row: pd.Series, model, classes, idx_up, idx_down):
-    """
-    Simula escenarios modificando features claves para ver si la señal se mantiene.
-    Retorna cuántos escenarios confirman la dirección.
-    """
-    scenarios = []
 
-    # Base: escenario actual
-    scenarios.append(X_row.copy())
 
-    # Escenario 1: volatilidad alta
-    s1 = X_row.copy()
-    s1["atr14"] *= 1.5
-    scenarios.append(s1)
-
-    # Escenario 2: volatilidad baja
-    s2 = X_row.copy()
-    s2["atr14"] *= 0.7
-    scenarios.append(s2)
-
-    # Escenario 3: spike alcista
-    s3 = X_row.copy()
-    s3["momentum"] *= 1.8
-    s3["rsi14"] = min(90, s3["rsi14"] + 10)
-    scenarios.append(s3)
-
-    # Escenario 4: spike bajista
-    s4 = X_row.copy()
-    s4["momentum"] *= -1.8
-    s4["rsi14"] = max(10, s4["rsi14"] - 10)
-    scenarios.append(s4)
-
-    # Escenario 5: lateral fuerte (momentum bajo)
-    s5 = X_row.copy()
-    s5["momentum"] = 0
-    s5["rsi14"] = 50
-    scenarios.append(s5)
-
-    confirmations_up = 0
-    confirmations_down = 0
-
-    for sc in scenarios:
-        proba = model.predict_proba(sc.values.reshape(1, -1))[0]
-        p_up = proba[idx_up]
-        p_down = proba[idx_down]
-
-        if p_up > p_down:
-            confirmations_up += 1
-        elif p_down > p_up:
-            confirmations_down += 1
-
-    total = len(scenarios)
-    return {
-        "total": total,
-        "up_votes": confirmations_up,
-        "down_votes": confirmations_down,
-        "confidence_up": confirmations_up / total,
-        "confidence_down": confirmations_down / total
-    }
-# ---------------- Core de señal ----------------
 def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use_kelly: bool = False) -> Dict[str, Any]:
     df = download_klines_safe(symbol)
     if df.empty:
@@ -1076,46 +1133,48 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     if df_feat.empty:
         return {"error": f"Datos insuficientes para {symbol} (warm-up)"}
 
-    X_all = df_feat.reindex(columns=feature_cols).astype(float)
-    if X_all.empty:
-        return {"error": "Features vacías"}
-
-    ok, why, news = condiciones_de_mercado_ok_df(symbol, df_feat)
     price_now = float(df_feat["Close"].iloc[-1])
+    adx_val = float(df_feat["adx"].iloc[-1])
+    atr_val = float(df_feat["atr"].iloc[-1])
+    atr_ratio = atr_val / price_now
 
-    # 🟡 Umbrales IA óptimos
-    th = get_best_threshold(symbol)
+    # 📰 Noticias
+    news = hay_noticia_importante_proxima()
+    has_news = bool(news)
 
-    # 📊 Predicciones IA
-    preds_all = model.predict_proba(X_all.values)
+    # 🧠 Umbrales dinámicos
+    th = get_dynamic_thresholds(adx_val, atr_ratio, has_news)
+
+    # 📊 Predicción IA
+    X_all = df_feat.reindex(columns=feature_cols).astype(float)
     classes = list(getattr(model, "classes_", []))
     idx_up = get_class_index(classes, 1)
     idx_down = get_class_index(classes, -1)
-    prob_up = float(preds_all[-1, idx_up])     # [0-1]
-    prob_down = float(preds_all[-1, idx_down]) # [0-1]
+    preds_all = model.predict_proba(X_all.values)
+    prob_up = float(preds_all[-1, idx_up])
+    prob_down = float(preds_all[-1, idx_down])
 
-    # 🧠 Señal IA base
+    # 🧠 Señal base
     signal = "ESPERAR"
-    if (prob_up > th["UP"]) and (prob_up - prob_down >= th["DIFF"]):
+    if prob_up > th["UP"] and (prob_up - prob_down) >= th["DIFF"]:
         signal = "COMPRAR"
-    elif (prob_down > th["DOWN"]) and (prob_down - prob_up >= th["DIFF"]):
+    elif prob_down > th["DOWN"] and (prob_down - prob_up) >= th["DIFF"]:
         signal = "VENTA"
 
-    # 🕯 Detectar patrón de velas japonesas
+    # 🕯 Patrones de velas
     patron = detectar_patron_velas(df)
     if patron:
-        logging.info(f"🕯 Patrón detectado en {symbol}: {patron}")
         if patron in ["HAMMER", "BULLISH_ENGULFING"] and signal == "COMPRAR":
-            signal = "COMPRAR"  # refuerza señal alcista
+            signal = "COMPRAR"
         elif patron in ["SHOOTING_STAR", "BEARISH_ENGULFING"] and signal == "VENTA":
-            signal = "VENTA"    # refuerza señal bajista
+            signal = "VENTA"
         elif patron == "DOJI":
-            signal = "ESPERAR"  # indecisión → evita entrada
+            signal = "ESPERAR"
 
-    # 🧭 Soportes y resistencias
-    soporte, resistencia = detect_swing_range(df_feat)
-    margen_atr = df_feat["atr"].iloc[-1] if "atr" in df_feat.columns else None
-    tech_message = None  # 👈 variable para mensaje técnico
+    # 🧭 Soportes y resistencias inteligentes
+    soporte, resistencia = detectar_zonas_sr(df_feat)
+    margen_atr = atr_val
+    tech_message = None
 
     if soporte and resistencia and margen_atr and not np.isnan(margen_atr):
         dist_a_soporte = abs(price_now - soporte)
@@ -1125,239 +1184,144 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
             logging.info(f"🧭 Cerca de SOPORTE ({soporte:.2f}) → refuerza COMPRA")
         elif signal == "VENTA" and dist_a_resistencia <= margen_atr:
             logging.info(f"🧭 Cerca de RESISTENCIA ({resistencia:.2f}) → refuerza VENTA")
-        else:
-            # 🛡️ Estrategia conservadora: si no está cerca de zonas clave, no entrar
-            tech_message = "🧭 Precio lejos de zonas técnicas → señal debilitada"
-            logging.info(tech_message)
+        elif signal in ["COMPRAR", "VENTA"]:
+            # 🧠 si hay señal pero lejos de zonas técnicas → espera ruptura
             signal = "ESPERAR"
+            tech_message = "🧭 Precio lejos de zonas técnicas — señal en pausa esperando ruptura."
 
-    # 📊 Confirmación técnica (ADX + EMAs)
-    adx_val = float(df_feat["adx"].iloc[-1])
-    ema20 = float(df_feat.get("ema_20", df_feat.get("ema20", np.nan)).iloc[-1])
-    ema50 = float(df_feat.get("ema_50", df_feat.get("ema50", np.nan)).iloc[-1])
+    # 📈 Confirmación adicional con tendencia (EMA / ADX)
+    ema20 = float(df_feat.get("ema_20").iloc[-1])
+    ema50 = float(df_feat.get("ema_50").iloc[-1])
     confirm = (signal == "COMPRAR" and adx_val > 20 and ema20 > ema50) or \
               (signal == "VENTA" and adx_val > 20 and ema20 < ema50)
 
-    # 🧠 Auto-What-If Engine (simulación de escenarios)
-    if signal in ["COMPRAR", "VENTA"]:
-        X_row = X_all.iloc[-1]
-        whatif_result = simulate_scenarios(symbol, X_row, model, classes, idx_up, idx_down)
-
-        min_confidence = 0.8
-        if signal == "COMPRAR" and whatif_result["confidence_up"] < min_confidence:
-            return {
-                "symbol": symbol,
-                "signal": "ESPERAR 🧠",
-                "message": f"❌ Señal descartada por motor What-If (solo {whatif_result['up_votes']}/{whatif_result['total']} escenarios favorables)",
-                "prob_up": prob_up * 100,
-                "prob_down": prob_down * 100,
-                "technical_message": tech_message
-            }
-        elif signal == "VENTA" and whatif_result["confidence_down"] < min_confidence:
-            return {
-                "symbol": symbol,
-                "signal": "ESPERAR 🧠",
-                "message": f"❌ Señal descartada por motor What-If (solo {whatif_result['down_votes']}/{whatif_result['total']} escenarios favorables)",
-                "prob_up": prob_up * 100,
-                "prob_down": prob_down * 100,
-                "technical_message": tech_message
-            }
-
-    # 🟡 Construir respuesta si no hay señal
-    if signal == "COMPRAR":
-        signal_out = "COMPRA CONFIRMADA ✅" if confirm else "COMPRA POTENCIAL ⚠️"
-    elif signal == "VENTA":
-        signal_out = "VENTA CONFIRMADA ✅" if confirm else "VENTA POTENCIAL ⚠️"
-    else:
-        msg = "Noticia de alto impacto próxima — Evitar operar." if news else f"Condiciones no ideales: {why}"
+    # 🟡 Construir salida si no hay señal
+    if signal == "ESPERAR":
+        msg = "Noticia de alto impacto próxima — Evitar operar." if news else "Condiciones no ideales."
         return {
             "symbol": symbol,
-            "signal": "ESPERAR 🧠" if not news else "ESPERAR 🚨",
+            "signal": "ESPERAR 🧠",
             "message": msg,
             "price": round(price_now, 4),
             "technical_message": tech_message,
-            "prob_up": None,
-            "prob_down": None,
-            "entry_suggest": None,
-            "SL": None,
-            "TP": None,
-            "risk_rr": None,
-            "plan": "NONE",
-            "narrative": f"🧠 Filtro estratégico: {why}",
-            "explanation": None,
+            "prob_up": round(prob_up * 100, 2),
+            "prob_down": round(prob_down * 100, 2),
+            "thresholds_used": th,
             "candle_pattern": patron,
             "support": round(soporte, 4) if soporte else None,
             "resistance": round(resistencia, 4) if resistencia else None,
             **({"news_event": news} if news else {})
         }
 
-    # 📌 Si hay señal de COMPRA o VENTA → calcular plan
-    trade_plan = choose_trade_plan(signal_out, df_feat)
+    # ✅ Señal final
+    signal_out = (
+        "COMPRA CONFIRMADA ✅" if signal == "COMPRAR" and confirm else
+        "VENTA CONFIRMADA ✅" if signal == "VENTA" and confirm else
+        "COMPRA POTENCIAL ⚠️" if signal == "COMPRAR" else
+        "VENTA POTENCIAL ⚠️"
+    )
 
-    X_row = X_all.iloc[-1]
-    dominant_class_idx = idx_up if prob_up >= prob_down else idx_down
-    explanation = build_local_explanation(X_row, class_idx=dominant_class_idx, top_n=5)
-    narrativa = market_context_narrative(symbol, df_feat, signal_out, prob_up * 100, prob_down * 100)
-
-    # 💰 Sizing sugerido
-    entry = trade_plan.get("entry_suggest")
-    sl = trade_plan.get("SL")
-    rr = trade_plan.get("risk_rr")
-    sizing = None
-    if entry and sl:
-        if use_kelly:
-            wr = 0.52  # estimado
-            frac = kelly_sizing(wr, rr or 1.2, fraction_cap=KELLY_FRACTION)
-            units = atr_target_position(balance, frac, entry, sl)
-            sizing = {"method": "Kelly_fraccional", "kelly_wr": round(wr, 3), "fraction": round(frac, 4), "units": round(units, 6)}
-        else:
-            units = atr_target_position(balance, DEFAULT_RISK_PER_TRADE, entry, sl)
-            sizing = {"method": "ATR_targeting", "risk_per_trade": DEFAULT_RISK_PER_TRADE, "units": round(units, 6)}
-
-    # 🧾 Respuesta final
-    resp = {
+    return {
         "symbol": symbol,
         "signal": signal_out,
         "prob_up": round(prob_up * 100, 2),
         "prob_down": round(prob_down * 100, 2),
         "price": round(price_now, 4),
-        "entry_suggest": trade_plan.get("entry_suggest"),
-        "SL": trade_plan.get("SL"),
-        "TP": trade_plan.get("TP"),
-        "risk_rr": trade_plan.get("risk_rr"),
-        "plan": trade_plan.get("plan"),
-        "planB_rules": trade_plan.get("planB_rules"),
-        "narrative": narrativa,
-        "explanation": explanation,
-        "sizing": sizing,
+        "technical_message": tech_message,
         "thresholds_used": th,
         "candle_pattern": patron,
         "support": round(soporte, 4) if soporte else None,
         "resistance": round(resistencia, 4) if resistencia else None,
-        "technical_message": tech_message  # 👈 mensaje agregado a la respuesta final
+        **({"news_event": news} if news else {})
     }
 
-    # 📝 Registrar trade automáticamente si hay señal de entrada
-    if signal_out in ["COMPRA CONFIRMADA ✅", "COMPRA POTENCIAL ⚠️", "VENTA CONFIRMADA ✅", "VENTA POTENCIAL ⚠️"]:
-        try:
-            entry_price = trade_plan.get("entry_suggest") or price_now
-            exit_price = entry_price  # inicial, luego se actualiza al cerrar
-            pnl_usd = 0.0
-            pnl_pct = 0.0
-
-            log_trade(
-                symbol,
-                signal_out,
-                entry_price,
-                exit_price,
-                pnl_usd,
-                pnl_pct,
-                prob_up * 100,
-                prob_down * 100,
-                signal_out,
-                narrativa
-            )
-            logging.info(f"📝 Trade registrado en log: {symbol} - {signal_out} @ {entry_price}")
-        except Exception as e:
-            logging.error(f"❌ Error al registrar trade en log: {e}")
-
-
-    # 📝 Registrar trade y abrir simulación
-    if signal_out in ["COMPRA CONFIRMADA ✅", "VENTA CONFIRMADA ✅"]:
-        try:
-            entry_price = trade_plan.get("entry_suggest") or price_now
-            sl = trade_plan.get("SL")
-            tp = trade_plan.get("TP")
-            if sl and tp:
-                open_trade(symbol, signal_out, entry_price, sl, tp, size_usd=100)  # tamaño base de operación
-        except Exception as e:
-            logging.error(f"❌ Error al abrir trade simulado: {e}")
-
-    return resp
-
-
 # ---------------- Backtest ----------------
-def simulate_trade(row_entry_idx, side, entry, sl, tp, df_feat, use_planB: bool) -> Tuple[float, int]:
-    bars = 0
-    risk = abs(entry - sl)
-    if risk <= 1e-12:
-        return 0.0, 0
 
-    size_factor = 1.0
-    trailing_sl = None
+def ejecutar_trade_paper(signal: dict):
+    global paper_balance, paper_trades, paper_winrate
 
-    for i in range(row_entry_idx + 1, len(df_feat)):
-        bars += 1
-        c = float(df_feat["Close"].iloc[i])
-        h = float(df_feat["High"].iloc[i])
-        l = float(df_feat["Low"].iloc[i])
-        atr = float(df_feat["atr"].iloc[i])
-        adx = float(df_feat["adx"].iloc[i])
+    symbol = signal["symbol"]
+    side = "long" if "COMPRA" in signal["signal"].upper() else "short"
 
-        if use_planB:
-            if adx < 15 and trailing_sl is None:
-                if side == "long":
-                    trailing_sl = c - 1.0 * atr
-                    tp_alt = c + 1.2 * atr
-                    if h >= tp_alt:
-                        gain = (tp_alt - entry) / risk
-                        return round(gain * size_factor, 2), bars
-                else:
-                    trailing_sl = c + 1.0 * atr
-                    tp_alt = c - 1.2 * atr
-                    if l <= tp_alt:
-                        gain = (entry - tp_alt) / risk
-                        return round(gain * size_factor, 2), bars
-            if ((side == "long" and (entry - l) > 1.2 * atr) or
-                (side == "short" and (h - entry) > 1.2 * atr)) and size_factor > 0.51:
-                size_factor = 0.5
+    # 📊 Descargar datos para simular trade
+    df = download_klines_safe(symbol)
+    df_feat = compute_indicators(df)
 
-        if trailing_sl is not None:
-            if side == "long":
-                trailing_sl = max(trailing_sl, c - 1.0 * atr)
-                if l <= trailing_sl:
-                    gain = (trailing_sl - entry) / risk
-                    return round(gain * size_factor, 2), bars
-            else:
-                trailing_sl = min(trailing_sl, c + 1.0 * atr)
-                if h >= trailing_sl:
-                    gain = (entry - trailing_sl) / risk
-                    return round(gain * size_factor, 2), bars
+    # 🧭 Construir plan de trade real (TP, SL, Entry)
+    plan = choose_trade_plan(signal["signal"], df_feat)
+    entry, sl, tp = plan.get("entry_suggest"), plan.get("SL"), plan.get("TP")
 
-        if side == "long":
-            if h >= tp:
-                gain = (tp - entry) / risk
-                return round(gain, 2), bars
-            if l <= sl:
-                loss = (sl - entry) / risk
-                return round(loss, 2), bars
-        else:
-            if l <= tp:
-                gain = (entry - tp) / risk
-                return round(gain, 2), bars
-            if h >= sl:
-                loss = (entry - sl) / risk
-                return round(loss, 2), bars
+    # 🛑 Si no hay niveles válidos, no hacer nada
+    if not entry or not sl or not tp or plan.get("plan") == "NONE":
+        return
 
-    last_close = float(df_feat["Close"].iloc[-1])
-    if side == "long":
-        res = (last_close - entry) / risk
-    else:
-        res = (entry - last_close) / risk
-    return round(res, 2), bars
+    # 🧪 👉 Aquí usamos tu función simulate_trade 👈
+    R, bars = simulate_trade(len(df_feat)-1, side, entry, sl, tp, df_feat, use_planB=True)
 
-def backtest_symbol(symbol: str, days: int = 60, use_planB: bool = True) -> Dict[str, Any]:
+    # 💰 Calcular resultado en dinero realista
+    risk_amount = paper_balance * 0.01
+    resultado_usd = R * risk_amount
+    paper_balance += resultado_usd
+
+    resultado = "WIN" if R > 0 else "LOSS"
+
+    paper_trades.append({
+        "symbol": symbol,
+        "side": side,
+        "entry": entry,
+        "SL": sl,
+        "TP": tp,
+        "R": R,
+        "resultado": resultado,
+        "usd_result": resultado_usd,
+        "bars": bars,
+        "balance_after": paper_balance
+    })
+
+    # 📊 Actualizar winrate
+    wins = len([t for t in paper_trades if t["R"] > 0])
+    paper_winrate = (wins / len(paper_trades)) * 100
+
+
+
+
+def backtest_symbol(symbol: str, days: int = 60, use_planB: bool = True) -> dict:
+    """
+    📊 Ejecuta un backtest sobre un símbolo de Binance usando lógica adaptativa o no adaptativa.
+    - Descarga velas reales usando el cliente global
+    - Aplica indicadores y modelo IA
+    - Evalúa señales y planes de trade con filtros flexibles
+    - Devuelve métricas de rendimiento
+    """
+    # ==============================
+    # 📥 Descargar datos históricos
+    # ==============================
     df = download_klines_safe(symbol)
     if df.empty:
+        logging.error(f"❌ No hay datos para {symbol}")
         return {"error": f"No hay datos para {symbol}"}
+
+    # ⏳ Filtrar el rango de tiempo
     since = df.index.max() - pd.Timedelta(days=days)
     df = df[df.index >= since]
+    if df.empty:
+        logging.warning(f"⚠️ No hay suficientes datos en el rango de {days} días para {symbol}")
+        return {"error": "Datos insuficientes para el rango solicitado"}
+
+    # 🧮 Calcular indicadores
     df_feat = compute_indicators(df)
     if df_feat.empty or len(df_feat) < 200:
+        logging.warning(f"⚠️ Datos insuficientes para backtest de {symbol}")
         return {"error": "Datos insuficientes para backtest"}
 
-    X_all = df_feat.reindex(columns=feature_cols).astype(float)
-    preds = model.predict_proba(X_all.values)
+    # 🧠 Predicciones del modelo IA
+    try:
+        X_all = df_feat.reindex(columns=feature_cols).astype(float)
+        preds = model.predict_proba(X_all.values)
+    except Exception as e:
+        logging.error(f"❌ Error al predecir con el modelo: {e}")
+        return {"error": "Fallo en predicciones del modelo"}
+
     classes = list(getattr(model, "classes_", []))
     idx_up = get_class_index(classes, 1)
     idx_down = get_class_index(classes, -1)
@@ -1365,62 +1329,123 @@ def backtest_symbol(symbol: str, days: int = 60, use_planB: bool = True) -> Dict
     th = get_symbol_thresholds(symbol)
     results = []
     cum_R = 0.0
-    day_loss_R: Dict[str, float] = {}
+    day_loss_R = {}
 
+    # ==============================
+    # 🧭 Loop de evaluación de señales
+    # ==============================
     for i in range(1, len(df_feat) - 1):
+        # 🎯 Señales IA
         prob_up = float(preds[i, idx_up])
         prob_down = float(preds[i, idx_down])
+        diff_prob = abs(prob_up - prob_down)
+
+        up_th = th.get("UP", BASE_UP_THRESHOLD)
+        down_th = th.get("DOWN", BASE_DOWN_THRESHOLD)
+        diff_th = th.get("DIFF", BASE_DIFF_MARGIN)
 
         signal = "ESPERAR"
-        if (prob_up > th["UP"]) and (prob_up - prob_down >= th["DIFF"]):
+        if prob_up > up_th and (prob_up - prob_down) >= diff_th:
             signal = "COMPRAR"
-        elif (prob_down > th["DOWN"]) and (prob_down - prob_up >= th["DIFF"]):
+        elif prob_down > down_th and (prob_down - prob_up) >= diff_th:
             signal = "VENTA"
+        elif diff_prob >= 0.02 and max(prob_up, prob_down) > 0.5:
+            signal = "COMPRAR" if prob_up > prob_down else "VENTA"
+
         if signal == "ESPERAR":
             continue
 
+        # ==============================
+        # 📊 Filtros técnicos flexibles
+        # ==============================
         adx_val = float(df_feat["adx"].iloc[i])
         ema20 = float(df_feat.get("ema_20", df_feat.get("ema20", np.nan)).iloc[i])
         ema50 = float(df_feat.get("ema_50", df_feat.get("ema50", np.nan)).iloc[i])
-        confirm = (signal == "COMPRAR" and adx_val > 20 and ema20 > ema50) or \
-                  (signal == "VENTA" and adx_val > 20 and ema20 < ema50)
-        signal_out = signal + (" CONFIRMADA ✅" if confirm else " POTENCIAL ⚠️")
+        atr_val = float(df_feat.get("atr", np.nan).iloc[i])
 
+        confirm_score = 0
+        if adx_val > MIN_ADX:
+            confirm_score += 1
+        if signal == "COMPRAR" and ema20 > ema50:
+            confirm_score += 1
+        if signal == "VENTA" and ema20 < ema50:
+            confirm_score += 1
+        if atr_val > MIN_ATR_RATIO * float(df_feat["Close"].iloc[i]):
+            confirm_score += 1
+
+        signal_out = signal + (" CONFIRMADA ✅" if confirm_score >= 2 else " POTENCIAL ⚠️")
+
+        # 🛑 Si no pasa ningún filtro técnico, descarta
+        if confirm_score == 0:
+            continue
+
+        logging.debug(
+            f"[SIGNAL] {signal_out} | UP={prob_up:.3f} DOWN={prob_down:.3f} "
+            f"DIFF={diff_prob:.3f} ADX={adx_val:.2f} EMA20={ema20:.2f} EMA50={ema50:.2f} ATR={atr_val:.6f}"
+        )
+
+        # ==============================
+        # 🧭 Plan de trade
+        # ==============================
         sub_df = df_feat.iloc[: i + 1]
         plan = choose_trade_plan(signal_out, sub_df)
         entry, sl, tp = plan.get("entry_suggest"), plan.get("SL"), plan.get("TP")
         if not entry or not sl or not tp or plan.get("plan") == "NONE":
             continue
 
+        # ⛔ Control de pérdida diaria
         day_key = df_feat.index[i].strftime("%Y-%m-%d")
         lost_today = day_loss_R.get(day_key, 0.0)
         if lost_today <= -DAILY_R_MAX:
             continue
 
+        # 🧮 Simulación de la operación
         side = "long" if "COMPRA" in signal_out.upper() else "short"
         R, bars = simulate_trade(i, side, entry, sl, tp, df_feat, use_planB=use_planB)
         cum_R += R
         if R < 0:
             day_loss_R[day_key] = day_loss_R.get(day_key, 0.0) + R
 
-        results.append({"idx": i, "time": str(df_feat.index[i]), "signal": signal_out,
-                        "entry": entry, "SL": sl, "TP": tp, "R": R, "bars": bars})
+        results.append({
+            "idx": i,
+            "time": str(df_feat.index[i]),
+            "signal": signal_out,
+            "entry": entry,
+            "SL": sl,
+            "TP": tp,
+            "R": R,
+            "bars": bars
+        })
 
+    # ==============================
+    # 📉 Si no hubo trades
+    # ==============================
     if not results:
-        return {"symbol": symbol, "days": days, "trades": 0, "cum_R": 0.0, "winrate": None, "avgR": None, "maxDD_R": 0.0, "details": []}
+        logging.warning(f"⚠️ No se generaron trades para {symbol} en {days} días")
+        return {
+            "symbol": symbol,
+            "days": days,
+            "trades": 0,
+            "cum_R": 0.0,
+            "winrate": None,
+            "avgR": None,
+            "maxDD_R": 0.0,
+            "details": []
+        }
 
+    # ==============================
+    # 📊 Métricas de rendimiento
+    # ==============================
     Rs = [r["R"] for r in results]
     wins = sum(1 for r in Rs if r > 0)
     cum_curve = np.cumsum(Rs)
     max_dd = 0.0
     peak = 0.0
     for v in cum_curve:
-        if v > peak:
-            peak = v
-        dd = peak - v
-        max_dd = max(max_dd, dd)
+        peak = max(peak, v)
+        max_dd = max(max_dd, peak - v)
 
-    return {
+    metrics = {
         "symbol": symbol,
         "days": days,
         "trades": len(results),
@@ -1430,6 +1455,12 @@ def backtest_symbol(symbol: str, days: int = 60, use_planB: bool = True) -> Dict
         "maxDD_R": round(float(max_dd), 2),
         "details": results[:200]
     }
+
+    logging.info(
+        f"✅ Backtest {symbol}: {metrics['trades']} trades | "
+        f"R={metrics['cum_R']} | winrate={metrics['winrate']}"
+    )
+    return metrics
 
 # ===================================================
 # 🌐 RUTAS PRINCIPALES
@@ -1484,16 +1515,61 @@ def api_ask():
         symbol = (data.get("symbol") or "").upper().strip()
         if not symbol:
             return jsonify({"error": "Símbolo vacío"}), 400
+
         balance = float(data.get("balance", DEFAULT_BALANCE))
         use_kelly = bool(data.get("use_kelly", False))
+
         resp = compute_signal_for_symbol(symbol, balance=balance, use_kelly=use_kelly)
+        print("DEBUG RESP INICIAL:", resp)
+
+        # 🆕 Si no hay df, lo descargamos ahora
+        df = download_klines_safe(symbol, INTERVAL)  # Usa tu propia función para obtener velas
+
+        if not df.empty:
+            signal = resp.get("signal", "")
+            prob_up = resp.get("prob_up", 0)
+            prob_down = resp.get("prob_down", 0)
+            soporte = float(resp.get("support")) if resp.get("support") is not None else None
+            resistencia = float(resp.get("resistance")) if resp.get("resistance") is not None else None
+            patron = resp.get("candle_pattern")
+            trade_plan = {
+                "entry_suggest": resp.get("entry_suggest"),
+                "SL": resp.get("SL"),
+                "TP": resp.get("TP"),
+                "plan": resp.get("plan")
+            }
+
+            narrative = market_context_narrative(
+                symbol,
+                df,
+                signal,
+                prob_up,
+                prob_down,
+                soporte=soporte,
+                resistencia=resistencia,
+                patron=patron,
+                trade_plan=trade_plan,
+                news=None
+            )
+
+            resp["narrative"] = narrative
+            print("📝 Narrativa generada:", narrative)
+
         return jsonify(resp)
+
     except Exception as e:
         logging.exception("Error en /api/ask")
         return jsonify({"error": str(e)}), 500
 
+
+
+from datetime import datetime
+
+last_scan_time = None  # 👈 variable global para guardar la hora del último escaneo
+
 @app.get("/api/scanner")
 def api_scanner():
+    global last_scan_time
     try:
         oportunidades = []
         for sym in SYMBOLS:
@@ -1515,13 +1591,19 @@ def api_scanner():
                     "risk_rr": rr,
                     "plan": result.get("plan")
                 })
-        if not oportunidades:
-            return jsonify([])
+
         oportunidades.sort(key=lambda x: x["risk_rr"] or 0, reverse=True)
-        return jsonify(oportunidades[:3])
+        last_scan_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        return jsonify({
+            "last_updated": last_scan_time,   # ⏳ Hora de la última actualización
+            "signals": oportunidades[:3]      # 👑 Top 3 señales
+        })
+
     except Exception as e:
         logging.exception("Error en /api/scanner")
         return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/whatif", methods=["POST"])
 def api_whatif():
@@ -1580,14 +1662,34 @@ def api_whatif():
 def api_backtest():
     try:
         data = request.get_json(force=True, silent=True) or {}
+
+        # ✅ Tomar el símbolo
         symbol = (data.get("symbol") or "").upper().strip()
-        days = int(data.get("days", 60))
-        use_planB = bool(data.get("planB", True))
         if not symbol:
             return jsonify({"error": "Símbolo vacío"}), 400
-        resB = backtest_symbol(symbol, days=days, use_planB=use_planB)
+
+        # ⏳ Tomar días, por defecto 90
+        days = int(data.get("days", 90))
+
+        # 🧠 Plan adaptativo o no
+        use_planB = bool(data.get("planB", True))
+
+        logging.info(f"📊 Iniciando backtest: {symbol} — {days} días — planB={use_planB}")
+
+        # 📥 Ejecutar backtest con lógica adaptativa
+        resB = backtest_symbol(symbol, days=days, use_planB=True)
+
+        # 📥 Ejecutar backtest sin lógica adaptativa
         resA = backtest_symbol(symbol, days=days, use_planB=False)
-        return jsonify({"with_planB": resB, "without_planB": resA})
+
+        # 📤 Retornar resultados
+        return jsonify({
+            "with_planB": resB,
+            "without_planB": resA,
+            "symbol": symbol,
+            "days": days
+        })
+
     except Exception as e:
         logging.exception("Error en /api/backtest")
         return jsonify({"error": str(e)}), 500
@@ -1672,29 +1774,110 @@ def get_filters_info():
         "umbrales_activos": mejores_umbral
     }
     return jsonify(response)
+
 @app.route('/favicon.ico')
 def favicon():
-    return send_from_directory(os.path.join(app.root_path, 'static'),
-                               'favicon.ico', mimetype='image/vnd.microsoft.icon')
+    return send_from_directory(
+        os.path.join(app.root_path, 'static'),
+        'favicon.ico',
+        mimetype='image/vnd.microsoft.icon'
+    )
+
 @app.route("/api/paper_stats")
 def paper_stats():
-    stats = get_stats()
-    return jsonify(stats)
+    total_trades = len(paper_trades)
+    wins = len([t for t in paper_trades if t["R"] > 0])
+    losses = total_trades - wins
+
+    return jsonify({
+        "balance": round(paper_balance, 2),
+        "total_trades": total_trades,
+        "wins": wins,
+        "losses": losses,
+        "winrate": round(paper_winrate, 2)
+    })
+
+
+# ===============================
+# 🌐 Endpoint para actualizar filtros dinámicamente
+# ===============================
+@app.route("/api/update-filter", methods=["POST"])
+def update_filter():
+    """
+    Permite actualizar filtros dinámicamente sin reiniciar el servidor.
+    Ejemplo body:
+    {
+        "min_pf": 1.8,
+        "min_accuracy": 55,
+        "max_drawdown": 0.15
+    }
+    """
+    global SYMBOLS
+    data = request.get_json(force=True) or {}
+
+    # Actualizar valores existentes si vienen en la petición
+    for key in filtros_config:
+        if key in data:
+            filtros_config[key] = float(data[key])
+
+    # Volver a filtrar símbolos según nuevos parámetros
+    SYMBOLS = get_symbols_with_filters()
+
+    return jsonify({
+        "status": "✅ Filtros actualizados correctamente",
+        "filtros": filtros_config,
+        "active_symbols": SYMBOLS
+    })
 
 
 # ===================================================
-# 🚀 MAIN
-# ===================================================
+# 🧪 Lanzar trades de prueba automáticamente (paper trading)
+def lanzar_trades_prueba(n=20):
+    import random
 
+    simbolos_prueba = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]
+    tipos_senal = ["COMPRA CONFIRMADA ✅", "VENTA CONFIRMADA ❌"]
+
+    for i in range(n):
+        fake_signal = {
+            "symbol": random.choice(simbolos_prueba),
+            "signal": random.choice(tipos_senal),
+            "price": random.uniform(25000, 70000)
+        }
+        ejecutar_trade_paper(fake_signal)
+    logging.info(f"📊 Se lanzaron {n} trades de prueba automáticamente.")
+
+# ===================================================
 if __name__ == "__main__":
-    # 👉 Lanza WebSocket en segundo plano
+    # ⚡ Primero: asegurar que el archivo de umbrales exista
+    _ensure_thresholds_file()
+
+    # 🧭 Inicializar símbolos activos (incluyendo BTC si fue forzado)
+    SYMBOLS = get_symbols_with_filters()
+
+    # 🌐 Luego: iniciar WebSocket en segundo plano con los símbolos correctos
     threading.Thread(target=iniciar_websocket, daemon=True).start()
 
-    _ensure_thresholds_file()
+    # 🧠 Conectar a Binance
     client = init_client(API_KEY, API_SECRET)
     if client is None:
         logging.error("No se pudo conectar a Binance. Saliendo.")
         exit(1)
 
-    # 👉 Ahora Flask se ejecutará normalmente
+    # 🤖 Iniciar aprendizaje adaptativo diario
+    from adaptive_learning import start_learning_thread
+    start_learning_thread()
+
+    # 🧪 Lanza trades de prueba al iniciar (opcional)
+    lanzar_trades_prueba(n=20)
+
+    # 🚀 Iniciar servidor Flask
     app.run(host="0.0.0.0", port=5000, debug=False)
+
+
+
+
+
+
+
+

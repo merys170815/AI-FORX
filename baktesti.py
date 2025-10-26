@@ -14,6 +14,8 @@ from binance.client import Client
 from datetime import datetime
 from itertools import product
 
+from pyparsing import results
+
 # ---------------- CONFIG ----------------
 API_KEY = os.getenv("API_KEY") or "TU_API_KEY_REAL"
 API_SECRET = os.getenv("API_SECRET") or "TU_API_SECRET_REAL"
@@ -73,10 +75,17 @@ def compute_indicators(df):
         df["logret"] = np.log(df["Close"] / df["Close"].shift(1))
         df["bb_width"] = df["High"] - df["Low"]
         df["ama_cross"] = np.sign(df["Close"].diff())
+
+        # 👇 NUEVO: indicadores usados en la lógica Flask
+        df["ema_20"] = ta.trend.EMAIndicator(df["Close"], window=20).ema_indicator()
+        df["ema_50"] = ta.trend.EMAIndicator(df["Close"], window=50).ema_indicator()
+        df["adx"] = ta.trend.ADXIndicator(df["High"], df["Low"], df["Close"], window=14).adx()
+
         return df
     except Exception as e:
         logging.error(f"Error calculando indicadores: {e}")
         return pd.DataFrame()
+
 
 def add_lag_features(df, col, lags=3):
     for i in range(1, lags + 1):
@@ -102,8 +111,47 @@ def build_features(df, sym, feature_cols):
 
     df = df.ffill().bfill().dropna()
     return df
+# ---------------- DETECCIÓN DE PATRONES DE VELA ----------------
+def detectar_patron_velas(df):
+    """
+    Detecta patrones básicos de vela: martillo, shooting star, engulfing, doji.
+    Retorna el nombre del patrón si hay coincidencia, o None.
+    """
+    if len(df) < 3:
+        return None
 
-# ---------------- BACKTEST ----------------
+    o = df["Open"]
+    h = df["High"]
+    l = df["Low"]
+    c = df["Close"]
+
+    o1, h1, l1, c1 = o.iloc[-1], h.iloc[-1], l.iloc[-1], c.iloc[-1]
+    o2, h2, l2, c2 = o.iloc[-2], h.iloc[-2], l.iloc[-2], c.iloc[-2]
+
+    cuerpo = abs(c1 - o1)
+    rango = h1 - l1
+    sombra_sup = h1 - max(c1, o1)
+    sombra_inf = min(c1, o1) - l1
+
+    # Evitar divisiones por cero
+    if rango == 0:
+        return None
+
+    # 🕯️ Patrones simples
+    if cuerpo < rango * 0.25 and sombra_inf > cuerpo * 2:
+        return "HAMMER"
+    elif cuerpo < rango * 0.25 and sombra_sup > cuerpo * 2:
+        return "SHOOTING_STAR"
+    elif c1 > o1 and o1 < c2 and c1 > o2:
+        return "BULLISH_ENGULFING"
+    elif c1 < o1 and o1 > c2 and c1 < o2:
+        return "BEARISH_ENGULFING"
+    elif abs(c1 - o1) <= rango * 0.1:
+        return "DOJI"
+
+    return None
+
+# ---------------- BACKTEST SINCRONIZADO CON FLASK ----------------
 def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
     results = []
     total_symbols = len(SYMBOLS)
@@ -123,30 +171,52 @@ def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
         gross_profit = gross_loss = 0
         equity_curve = [capital]
 
-        for i in range(1, len(df)):
+        for i in range(30, len(df)):  # pequeño warmup inicial para indicadores
+            # 📊 IA: predicción de probabilidades
             X = df[feature_cols].iloc[[i]]
             probs = model.predict_proba(X)[0]
             prob_down, prob_neutral, prob_up = probs
 
-            if prob_up >= up_thr:
-                ia_signal = "BUY"
-            elif prob_down >= down_thr:
-                ia_signal = "SELL"
-            else:
-                last_close = df["Close"].iloc[i]
-                prev_close = df["Close"].iloc[i - 1]
-                ia_signal = "BUY" if last_close > prev_close else ("SELL" if last_close < prev_close else "HOLD")
-
+            # 🧮 Indicadores técnicos adicionales
             price = df["Close"].iloc[i]
             atr = df["atr14"].iloc[i]
+            adx = df["adx"].iloc[i]
+            ema20 = df["ema_20"].iloc[i]
+            ema50 = df["ema_50"].iloc[i]
 
+            # 📌 Filtros mínimos de ATR y ADX
             atr_ratio = atr / price
+            if atr_ratio < 0.0001 or adx < 10:
+                ia_signal = "HOLD"
+            else:
+                # 🧠 Señal IA con umbrales
+                if prob_up >= up_thr and (prob_up - prob_down) >= 0.02:
+                    ia_signal = "BUY"
+                elif prob_down >= down_thr and (prob_down - prob_up) >= 0.02:
+                    ia_signal = "SELL"
+                else:
+                    ia_signal = "HOLD"
+
+                # 📈 Confirmación técnica EMA
+                if ia_signal == "BUY" and ema20 <= ema50:
+                    ia_signal = "HOLD"
+                elif ia_signal == "SELL" and ema20 >= ema50:
+                    ia_signal = "HOLD"
+
+                # 🕯️ Confirmación de patrones de vela
+                patron = detectar_patron_velas(df.iloc[:i+1])
+                if ia_signal == "BUY" and patron not in ["HAMMER", "BULLISH_ENGULFING"]:
+                    ia_signal = "HOLD"
+                elif ia_signal == "SELL" and patron not in ["SHOOTING_STAR", "BEARISH_ENGULFING"]:
+                    ia_signal = "HOLD"
+
+            # 🧭 TP / SL dinámicos basados en ATR
             sl_mult = 1.5 + (atr_ratio * 100)
             tp_mult = max(1.2, 2.2 - (atr_ratio * 50))
-
             sl = price - sl_mult * atr if ia_signal == "BUY" else price + sl_mult * atr
             tp = price + tp_mult * atr if ia_signal == "BUY" else price - tp_mult * atr
 
+            # 📈 Ejecución de trade simulado
             if position is None and ia_signal in ["BUY", "SELL"]:
                 position = "LONG" if ia_signal == "BUY" else "SHORT"
                 entry_price = price
@@ -177,6 +247,7 @@ def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
 
             equity_curve.append(capital)
 
+        # 📊 Métricas finales por símbolo
         accuracy = (wins / trades * 100) if trades > 0 else 0
         final_capital = capital
         drawdown = abs((np.array(equity_curve) - np.maximum.accumulate(equity_curve)) / np.maximum.accumulate(equity_curve)).max()
@@ -206,6 +277,34 @@ def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
         logging.info("\n📊 ================== RESUMEN FINAL ==================")
         logging.info(f"\n{df_results[['symbol','trades','accuracy','profit_factor','capital_final','sharpe_ratio']]}")
         logging.info("======================================================\n")
+    return df_results
+
+def ejecutar_backtest(client, model, feature_cols, up_thr, down_thr):
+    ...
+    # 📊 Métricas por símbolo
+    df_results = pd.DataFrame(results)
+
+    # 🏆 Ranking por profit factor
+    df_sorted = df_results.sort_values(by="profit_factor", ascending=False)
+    logging.info("🏁 MEJORES UMBRALES POR SÍMBOLO ==========================")
+    for _, row in df_sorted.iterrows():
+        sym = str(row.get("symbol", "N/A"))
+        trades = int(float(row.get("trades", 0)))
+        acc = round(float(row.get("accuracy", 0)), 2)
+        pf = round(float(row.get("profit_factor", 0)), 2)
+        gain = round(float(row.get("capital_final", CAPITAL_INICIAL)) - CAPITAL_INICIAL, 2)
+        upv = float(row.get("UP", 0))
+        downv = float(row.get("DOWN", 0))
+
+        if trades == 0:
+            logging.info(f"🚫 {sym} → Sin señales válidas")
+        else:
+            logging.info(
+                f"{sym} → UP={upv:.2f} DOWN={downv:.2f} | Trades: {trades} | "
+                f"Accuracy: {acc}% | PF={pf} | Ganancia: ${gain}"
+            )
+    logging.info("=========================================================\n")
+
     return df_results
 
 # ---------------- OPTIMIZADOR DE UMBRALES ----------------
