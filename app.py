@@ -52,6 +52,14 @@ except Exception:
     shap = None
     HAS_SHAP = False
 
+def debug_model_mapping_and_bias(df_feat):
+    X = df_feat.reindex(columns=feature_cols).astype(float).fillna(0.0)
+    classes = list(getattr(model, "classes_", []))
+    print("MODEL CLASSES:", classes)
+    preds = model.predict_proba(X.values)
+    mean_probs = preds.mean(axis=0)
+    print("MEAN PROBS BY CLASS:", {str(c): round(float(p), 3) for c, p in zip(classes, mean_probs)})
+
 # === Callback de WebSocket ===
 def handle_socket_message(msg):
     try:
@@ -91,8 +99,8 @@ THRESHOLD_STATE_FILE = "thresholds_state.json"
 OPTIM_FILE = "backtest_results_optim.csv"
 
 # ——— UMBRALES —
-BASE_UP_THRESHOLD   = 0.52   # 📉 un poco más bajo → permite más señales buenas
-BASE_DOWN_THRESHOLD = 0.52
+BASE_UP_THRESHOLD   = 0.53   # 📉 un poco más bajo → permite más señales buenas
+BASE_DOWN_THRESHOLD = 0.53
 BASE_DIFF_MARGIN    = 0.025  # margen moderado → evita falsas señales, sin ser tan restrictivo
 MAX_THRESHOLD       = 0.80   # ✅ lo dejamos igual
 MIN_THRESHOLD       = 0.42   # 📉 un poquito menos restrictivo que 0.45
@@ -200,8 +208,12 @@ def get_symbols_with_filters(file=OPTIM_FILE):
 # ===============================
 mejores_umbral: Dict[str, Dict[str, float]] = {}
 
+
 def cargar_mejores_umbral():
-    """Carga umbrales SOLO para símbolos activos (SYMBOLS)."""
+    """
+    Lee el archivo backtest_results_optim.csv y carga los mejores umbrales
+    SOLO para los símbolos activos que superaron el filtro PF.
+    """
     global mejores_umbral
     try:
         if not os.path.exists(OPTIM_FILE):
@@ -213,13 +225,14 @@ def cargar_mejores_umbral():
         nuevos = {}
         for _, row in df.iterrows():
             symbol = str(row["symbol"]).upper().strip()
+            # ⚡ Solo incluir símbolos que pasaron el filtro PF
             if symbol not in SYMBOLS:
                 continue
             up_val = float(row.get("UP", BASE_UP_THRESHOLD))
             down_val = float(row.get("DOWN", BASE_DOWN_THRESHOLD))
             nuevos[symbol] = {
                 "UP": max(MIN_THRESHOLD, min(MAX_THRESHOLD, up_val)),
-                "DOWN": max(MIN_THRESHOLD, min(MAX_THRESHOLD, down_val)),
+                "DOWN": max(MIN_THRESHOLD, min(MAX_THRESHOLD, down_val))
             }
         mejores_umbral = nuevos
         logging.info(f"📥 Mejores umbrales cargados (filtrados): {mejores_umbral}")
@@ -360,42 +373,6 @@ def get_symbols_with_filters(file=OPTIM_FILE):
         logging.error(f"❌ Error leyendo {file}: {e}")
         return ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "DOGEUSDT"]
 
-
-# 🔹 Inicializar símbolos activos al iniciar la app
-SYMBOLS = get_symbols_with_filters()
-
-def cargar_mejores_umbral():
-    """
-    Lee el archivo backtest_results_optim.csv y carga los mejores umbrales
-    SOLO para los símbolos activos que superaron el filtro PF.
-    """
-    global mejores_umbral
-    try:
-        if not os.path.exists(OPTIM_FILE):
-            logging.warning(f"⚠️ {OPTIM_FILE} no encontrado, usando umbrales base.")
-            mejores_umbral = {}
-            return mejores_umbral
-
-        df = pd.read_csv(OPTIM_FILE)
-        nuevos = {}
-        for _, row in df.iterrows():
-            symbol = str(row["symbol"]).upper().strip()
-            # ⚡ Solo incluir símbolos que pasaron el filtro PF
-            if symbol not in SYMBOLS:
-                continue
-            up_val = float(row.get("UP", BASE_UP_THRESHOLD))
-            down_val = float(row.get("DOWN", BASE_DOWN_THRESHOLD))
-            nuevos[symbol] = {
-                "UP": max(MIN_THRESHOLD, min(MAX_THRESHOLD, up_val)),
-                "DOWN": max(MIN_THRESHOLD, min(MAX_THRESHOLD, down_val))
-            }
-        mejores_umbral = nuevos
-        logging.info(f"📥 Mejores umbrales cargados (filtrados): {mejores_umbral}")
-        return mejores_umbral
-    except Exception as e:
-        logging.error(f"❌ Error cargando {OPTIM_FILE}: {e}")
-        mejores_umbral = {}
-        return mejores_umbral
 
 def get_best_threshold(symbol: str) -> Dict[str, float]:
     """
@@ -611,6 +588,9 @@ def load_model():
 
 load_model()
 threading.Thread(target=lambda: (time.sleep(60), load_model()), daemon=True).start()
+
+print("CLASES DEL MODELO:", model.classes_)
+print("FEATURES DEL MODELO:", feature_cols)
 
 if feature_cols is None:
     feature_cols = [
@@ -1126,8 +1106,10 @@ def get_class_index(classes, value):
         return classes.index(alt_val)
     raise ValueError(f"Clase {value} no encontrada en modelo (clases={classes})")
 
-
 def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use_kelly: bool = False) -> Dict[str, Any]:
+    # =========================
+    # 📥 1) Datos
+    # =========================
     df = download_klines_safe(symbol)
     if df.empty:
         return {"error": f"No hay datos para {symbol}"}
@@ -1136,71 +1118,127 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     if df_feat.empty:
         return {"error": f"Datos insuficientes para {symbol} (warm-up)"}
 
-    price_now = float(df_feat["Close"].iloc[-1])
-    adx_val = float(df_feat["adx"].iloc[-1])
-    atr_val = float(df_feat["atr"].iloc[-1])
-    atr_ratio = atr_val / price_now
+    # =========================
+    # 📊 2) Variables base
+    # =========================
+    price_now  = float(df_feat["Close"].iloc[-1])
+    adx_val    = float(df_feat["adx"].iloc[-1])
+    atr_val    = float(df_feat["atr"].iloc[-1])
+    atr_ratio  = atr_val / max(price_now, 1e-9)
+    ema20      = float(df_feat.get("ema_20").iloc[-1])
+    ema50      = float(df_feat.get("ema_50").iloc[-1])
+    bb_width   = float(df_feat.get("bb_width").iloc[-1]) if "bb_width" in df_feat.columns else None
 
-    # 📰 Noticias
+    # 📰 3) Noticias
     news = hay_noticia_importante_proxima()
     has_news = bool(news)
 
-    # 🧠 Umbrales dinámicos
+    # 🧠 4) Umbrales dinámicos (en función de ADX/volatilidad/noticias)
     th = get_dynamic_thresholds(adx_val, atr_ratio, has_news)
 
-    # 📊 Predicción IA
-    X_all = df_feat.reindex(columns=feature_cols).astype(float)
-    classes = list(getattr(model, "classes_", []))
-    idx_up = get_class_index(classes, 1)
-    idx_down = get_class_index(classes, -1)
-    preds_all = model.predict_proba(X_all.values)
-    prob_up = float(preds_all[-1, idx_up])
-    prob_down = float(preds_all[-1, idx_down])
+    # =========================
+    # ⚠️ 5) Detección de lateralidad
+    # =========================
+    lateral = False
+    lateral_reasons = []
+    if adx_val < 20:
+        lateral = True; lateral_reasons.append(f"ADX bajo ({adx_val:.2f})")
+    if abs(ema20 - ema50) / max(price_now, 1e-9) < 0.001:
+        lateral = True; lateral_reasons.append("EMA20 ≈ EMA50")
+    if bb_width is not None and bb_width < 0.01:
+        lateral = True; lateral_reasons.append(f"Bollinger width estrecho ({bb_width:.4f})")
+    if atr_ratio < 0.002:
+        lateral = True; lateral_reasons.append(f"ATR muy bajo ({atr_ratio:.4f})")
 
-    # 🧠 Señal base
+    # =========================
+    # 🤖 6) Predicción IA (modelo)
+    # =========================
+    X_all    = df_feat.reindex(columns=feature_cols).astype(float)
+    preds    = model.predict_proba(X_all.values)
+    classes  = list(getattr(model, "classes_", []))
+    idx_up   = get_class_index(classes, 1)     # clase UP (1 o "UP")
+    idx_down = get_class_index(classes, -1)    # clase DOWN (-1 o "DOWN")
+
+    prob_up   = float(preds[-1, idx_up])
+    prob_down = float(preds[-1, idx_down])
+
+    # =========================
+    # 🧭 7) Señal IA base (sólo por probabilidades)
+    # =========================
     signal = "ESPERAR"
     if prob_up > th["UP"] and (prob_up - prob_down) >= th["DIFF"]:
         signal = "COMPRAR"
     elif prob_down > th["DOWN"] and (prob_down - prob_up) >= th["DIFF"]:
         signal = "VENTA"
 
-    # 🕯 Patrones de velas
-    patron = detectar_patron_velas(df)
-    if patron:
-        if patron in ["HAMMER", "BULLISH_ENGULFING"] and signal == "COMPRAR":
-            signal = "COMPRAR"
-        elif patron in ["SHOOTING_STAR", "BEARISH_ENGULFING"] and signal == "VENTA":
-            signal = "VENTA"
-        elif patron == "DOJI":
-            signal = "ESPERAR"
-
-    # 🧭 Soportes y resistencias inteligentes
-    soporte, resistencia = detectar_zonas_sr(df_feat)
-    margen_atr = atr_val
+    # Bloqueo por lateralidad
     tech_message = None
+    if lateral and signal in ("COMPRAR", "VENTA"):
+        signal = "ESPERAR"
+        tech_message = f"⏸️ Mercado lateral — señal bloqueada ({' / '.join(lateral_reasons)})"
 
-    if soporte and resistencia and margen_atr and not np.isnan(margen_atr):
-        dist_a_soporte = abs(price_now - soporte)
-        dist_a_resistencia = abs(price_now - resistencia)
+    # =========================
+    # 🕯️ 8) Patrones de velas (filtros suaves)
+    # =========================
+    patron = detectar_patron_velas(df)
+    if patron == "DOJI":
+        signal = "ESPERAR"
+    # (HAMMER / BULLISH_ENGULFING) refuerzan compra; (SHOOTING_STAR / BEARISH_ENGULFING) refuerzan venta,
+    # pero no fuerzan la dirección si ya quedó en ESPERAR.
 
-        if signal == "COMPRAR" and dist_a_soporte <= margen_atr:
-            logging.info(f"🧭 Cerca de SOPORTE ({soporte:.2f}) → refuerza COMPRA")
-        elif signal == "VENTA" and dist_a_resistencia <= margen_atr:
-            logging.info(f"🧭 Cerca de RESISTENCIA ({resistencia:.2f}) → refuerza VENTA")
-        elif signal in ["COMPRAR", "VENTA"]:
-            # 🧠 si hay señal pero lejos de zonas técnicas → espera ruptura
+    # =========================
+    # 📈 9) Soportes / Resistencias — SOLO ruptura o rebote (y continuación por tendencia)
+    # =========================
+    soporte, resistencia = detectar_zonas_sr(df_feat)
+    atr_margin = atr_val                 # usamos ATR real como margen técnico
+    valid_signal = False
+
+    if signal in ("COMPRAR", "VENTA") and (soporte is not None or resistencia is not None):
+        dist_support    = abs(price_now - soporte) if soporte is not None else float("inf")
+        dist_resistance = abs(price_now - resistencia) if resistencia is not None else float("inf")
+
+        # ✅ Ruptura
+        if signal == "COMPRAR" and (resistencia is not None) and (price_now > resistencia + 0.3 * atr_margin):
+            tech_message = f"🚀 Ruptura de resistencia ({resistencia:.2f}) → compra válida."
+            valid_signal = True
+        elif signal == "VENTA" and (soporte is not None) and (price_now < soporte - 0.3 * atr_margin):
+            tech_message = f"📉 Ruptura de soporte ({soporte:.2f}) → venta válida."
+            valid_signal = True
+
+        # ✅ Rebote
+        elif signal == "COMPRAR" and (soporte is not None) and (dist_support <= atr_margin):
+            tech_message = f"🟢 Rebote en soporte ({soporte:.2f}) → compra válida."
+            valid_signal = True
+        elif signal == "VENTA" and (resistencia is not None) and (dist_resistance <= atr_margin):
+            tech_message = f"🔴 Rebote en resistencia ({resistencia:.2f}) → venta válida."
+            valid_signal = True
+
+        # ✅ Continuación fuerte por tendencia (aunque esté lejos de S/R)
+        elif adx_val > 25 and (
+            (signal == "COMPRAR" and ema20 > ema50) or
+            (signal == "VENTA" and ema20 < ema50)
+        ):
+            tech_message = "📈 Tendencia fuerte → continuación válida aunque esté lejos de S/R."
+            valid_signal = True
+
+        # ❌ Si nada valida, se espera
+        if not valid_signal:
             signal = "ESPERAR"
-            tech_message = "🧭 Precio lejos de zonas técnicas — señal en pausa esperando ruptura."
+            tech_message = "🧭 Sin ruptura/rebote ni tendencia fuerte — esperar."
 
-    # 📈 Confirmación adicional con tendencia (EMA / ADX)
-    ema20 = float(df_feat.get("ema_20").iloc[-1])
-    ema50 = float(df_feat.get("ema_50").iloc[-1])
-    confirm = (signal == "COMPRAR" and adx_val > 20 and ema20 > ema50) or \
-              (signal == "VENTA" and adx_val > 20 and ema20 < ema50)
+    # =========================
+    # ✅ 10) Confirmación de tendencia (para etiquetar ‘CONFIRMADA’)
+    # =========================
+    confirm = (
+        (signal == "COMPRAR" and adx_val > 20 and ema20 > ema50) or
+        (signal == "VENTA"  and adx_val > 20 and ema20 < ema50)
+    )
 
-    # 🟡 Construir salida si no hay señal
+    # =========================
+    # 🧘 11) Si no hay señal operable
+    # =========================
     if signal == "ESPERAR":
-        msg = "Noticia de alto impacto próxima — Evitar operar." if news else "Condiciones no ideales."
+        msg = "Noticia de alto impacto próxima — evitar operar." if news else "Condiciones no ideales."
         return {
             "symbol": symbol,
             "signal": "ESPERAR 🧠",
@@ -1211,16 +1249,20 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
             "prob_down": round(prob_down * 100, 2),
             "thresholds_used": th,
             "candle_pattern": patron,
-            "support": round(soporte, 4) if soporte else None,
-            "resistance": round(resistencia, 4) if resistencia else None,
+            "support": round(soporte, 4) if soporte is not None else None,
+            "resistance": round(resistencia, 4) if resistencia is not None else None,
+            "lateral": lateral,
+            "lateral_reasons": lateral_reasons if lateral else None,
             **({"news_event": news} if news else {})
         }
 
-    # ✅ Señal final
+    # =========================
+    # 🏁 12) Señal final
+    # =========================
     signal_out = (
-        "COMPRA CONFIRMADA ✅" if signal == "COMPRAR" and confirm else
-        "VENTA CONFIRMADA ✅" if signal == "VENTA" and confirm else
-        "COMPRA POTENCIAL ⚠️" if signal == "COMPRAR" else
+        "COMPRA CONFIRMADA ✅" if (signal == "COMPRAR" and confirm) else
+        "VENTA CONFIRMADA ✅"  if (signal == "VENTA"  and confirm) else
+        "COMPRA POTENCIAL ⚠️" if (signal == "COMPRAR") else
         "VENTA POTENCIAL ⚠️"
     )
 
@@ -1233,10 +1275,13 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
         "technical_message": tech_message,
         "thresholds_used": th,
         "candle_pattern": patron,
-        "support": round(soporte, 4) if soporte else None,
-        "resistance": round(resistencia, 4) if resistencia else None,
+        "support": round(soporte, 4) if soporte is not None else None,
+        "resistance": round(resistencia, 4) if resistencia is not None else None,
+        "lateral": lateral,
+        "lateral_reasons": lateral_reasons if lateral else None,
         **({"news_event": news} if news else {})
     }
+
 
 # ---------------- Backtest ----------------
 
@@ -1510,7 +1555,6 @@ def get_thresholds_view():
     if not sym:
         return jsonify({"error": "symbol requerido"}), 400
     return jsonify({"symbol": sym, "thresholds": get_symbol_thresholds(sym)})
-
 @app.route("/api/ask", methods=["GET", "POST"])
 def api_ask():
     try:
@@ -1527,10 +1571,11 @@ def api_ask():
         balance = float(data.get("balance", DEFAULT_BALANCE)) if request.method == "POST" else DEFAULT_BALANCE
         use_kelly = bool(data.get("use_kelly", False)) if request.method == "POST" else False
 
+        # 🧠 Calcula la señal
         resp = compute_signal_for_symbol(symbol, balance=balance, use_kelly=use_kelly)
         print("DEBUG RESP INICIAL:", resp)
 
-        # 🆕 Si no hay df, lo descargamos ahora
+        # 🆕 Descarga df si no existe
         df = download_klines_safe(symbol, INTERVAL)
 
         if not df.empty:
@@ -1547,12 +1592,13 @@ def api_ask():
                 "plan": resp.get("plan")
             }
 
+            # 🧠 ✅ Llamada corregida con nombres correctos
             narrative = market_context_narrative(
                 symbol,
                 df,
                 signal,
-                prob_up,
-                prob_down,
+                prob_up_pct=prob_up,         # 👈 nombres alineados con tu función
+                prob_down_pct=prob_down,     # 👈 nombres alineados con tu función
                 soporte=soporte,
                 resistencia=resistencia,
                 patron=patron,
@@ -1568,6 +1614,7 @@ def api_ask():
     except Exception as e:
         logging.exception("Error en /api/ask")
         return jsonify({"error": str(e)}), 500
+
 
 @app.get("/api/scanner")
 def api_scanner():
