@@ -109,10 +109,10 @@ MIN_THRESHOLD       = 0.42   # 📉 un poquito menos restrictivo que 0.45
 
 # 📊 Filtros de mercado
 MIN_ATR_RATIO = 0.00015   # ⚖️ sube un poco desde 0.0001 (mejor volatilidad mínima)
-MIN_ADX       = 11        # ⚖️ sube ligeramente, sin ser tan agresivo como 12
+MIN_ADX       = 12        # ⚖️ sube ligeramente, sin ser tan agresivo como 12
 MIN_RANGE_RATIO = 0.0015  # ⚖️ filtra rangos muy estrechos, pero deja pasar movimientos suaves
 FIB_LOOKBACK = 60         # ✅ bien, lo dejamos igual
-SL_BUFFER_ATR_MULT = 0.22 # ⚖️ un pequeño margen extra para evitar stops falsos
+SL_BUFFER_ATR_MULT = 0.25 # ⚖️ un pequeño margen extra para evitar stops falsos
 
 
 TE_API_KEY = os.getenv("TE_API_KEY") or ""
@@ -924,19 +924,36 @@ def compute_rr(entry, sl, tp):
     except Exception:
         return None
 
-def build_atr_plan(signal, price, atr):
-    if "COMPRA" in signal.upper():
+def build_atr_plan(signal: str, price: float, atr: float):
+    """
+    Crea un plan de entrada, SL y TP basado en ATR, con detección flexible de texto.
+    """
+    if signal is None or not isinstance(signal, str):
+        return {"plan": "NONE", "entry_suggest": None, "SL": None, "TP": None, "risk_rr": None}
+
+    sig = signal.upper()
+
+    if "COMPRA" in sig:
         entry = price
         sl = price - atr
         tp = price + atr * 1.5
-    elif "VENTA" in signal.upper():
+    elif "VENTA" in sig:
         entry = price
         sl = price + atr
         tp = price - atr * 1.5
     else:
         return {"plan": "NONE", "entry_suggest": None, "SL": None, "TP": None, "risk_rr": None}
-    rr = compute_rr(entry, sl, tp)
-    return {"plan": "ATR", "entry_suggest": round(entry, 4), "SL": round(sl, 4), "TP": round(tp, 4), "risk_rr": rr}
+
+    rr = abs((tp - entry) / (entry - sl)) if sl != entry else None
+
+    return {
+        "plan": "ATR",
+        "entry_suggest": round(entry, 4),
+        "SL": round(sl, 4),
+        "TP": round(tp, 4),
+        "risk_rr": rr
+    }
+
 
 def choose_trade_plan(signal, df_feat):
     price = float(df_feat["Close"].iloc[-1])
@@ -1105,7 +1122,6 @@ def get_class_index(classes, value):
     if alt_val in classes:
         return classes.index(alt_val)
     raise ValueError(f"Clase {value} no encontrada en modelo (clases={classes})")
-
 def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use_kelly: bool = False) -> Dict[str, Any]:
     # =========================
     # 📥 1) Datos
@@ -1156,14 +1172,14 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     X_all    = df_feat.reindex(columns=feature_cols).astype(float)
     preds    = model.predict_proba(X_all.values)
     classes  = list(getattr(model, "classes_", []))
-    idx_up   = get_class_index(classes, 1)     # clase UP (1 o "UP")
-    idx_down = get_class_index(classes, -1)    # clase DOWN (-1 o "DOWN")
+    idx_up   = get_class_index(classes, 1)
+    idx_down = get_class_index(classes, -1)
 
     prob_up   = float(preds[-1, idx_up])
     prob_down = float(preds[-1, idx_down])
 
     # =========================
-    # 🧭 7) Señal IA base (sólo por probabilidades)
+    # 🧭 7) Señal IA base (por probabilidad)
     # =========================
     signal = "ESPERAR"
     if prob_up > th["UP"] and (prob_up - prob_down) >= th["DIFF"]:
@@ -1171,49 +1187,46 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     elif prob_down > th["DOWN"] and (prob_down - prob_up) >= th["DIFF"]:
         signal = "VENTA"
 
-    # Bloqueo por lateralidad
     tech_message = None
     if lateral and signal in ("COMPRAR", "VENTA"):
         signal = "ESPERAR"
         tech_message = f"⏸️ Mercado lateral — señal bloqueada ({' / '.join(lateral_reasons)})"
 
     # =========================
-    # 🕯️ 8) Patrones de velas (filtros suaves)
+    # 🕯️ 8) Patrones de velas
     # =========================
     patron = detectar_patron_velas(df)
     if patron == "DOJI":
         signal = "ESPERAR"
-    # (HAMMER / BULLISH_ENGULFING) refuerzan compra; (SHOOTING_STAR / BEARISH_ENGULFING) refuerzan venta,
-    # pero no fuerzan la dirección si ya quedó en ESPERAR.
 
     # =========================
-    # 📈 9) Soportes / Resistencias — SOLO ruptura o rebote (y continuación por tendencia)
+    # 📈 9) Soportes / Resistencias
     # =========================
     soporte, resistencia = detectar_zonas_sr(df_feat)
-    atr_margin = atr_val                 # usamos ATR real como margen técnico
+    atr_margin = atr_val
     valid_signal = False
 
     if signal in ("COMPRAR", "VENTA") and (soporte is not None or resistencia is not None):
         dist_support    = abs(price_now - soporte) if soporte is not None else float("inf")
         dist_resistance = abs(price_now - resistencia) if resistencia is not None else float("inf")
 
-        # ✅ Ruptura
-        if signal == "COMPRAR" and (resistencia is not None) and (price_now > resistencia + 0.3 * atr_margin):
+        # Rupturas
+        if signal == "COMPRAR" and resistencia is not None and price_now > resistencia + 0.3 * atr_margin:
             tech_message = f"🚀 Ruptura de resistencia ({resistencia:.2f}) → compra válida."
             valid_signal = True
-        elif signal == "VENTA" and (soporte is not None) and (price_now < soporte - 0.3 * atr_margin):
+        elif signal == "VENTA" and soporte is not None and price_now < soporte - 0.3 * atr_margin:
             tech_message = f"📉 Ruptura de soporte ({soporte:.2f}) → venta válida."
             valid_signal = True
 
-        # ✅ Rebote
-        elif signal == "COMPRAR" and (soporte is not None) and (dist_support <= atr_margin):
+        # Rebotess
+        elif signal == "COMPRAR" and soporte is not None and dist_support <= atr_margin:
             tech_message = f"🟢 Rebote en soporte ({soporte:.2f}) → compra válida."
             valid_signal = True
-        elif signal == "VENTA" and (resistencia is not None) and (dist_resistance <= atr_margin):
+        elif signal == "VENTA" and resistencia is not None and dist_resistance <= atr_margin:
             tech_message = f"🔴 Rebote en resistencia ({resistencia:.2f}) → venta válida."
             valid_signal = True
 
-        # ✅ Continuación fuerte por tendencia (aunque esté lejos de S/R)
+        # Continuación de tendencia
         elif adx_val > 25 and (
             (signal == "COMPRAR" and ema20 > ema50) or
             (signal == "VENTA" and ema20 < ema50)
@@ -1221,17 +1234,17 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
             tech_message = "📈 Tendencia fuerte → continuación válida aunque esté lejos de S/R."
             valid_signal = True
 
-        # ❌ Si nada valida, se espera
+        # Si nada valida
         if not valid_signal:
             signal = "ESPERAR"
             tech_message = "🧭 Sin ruptura/rebote ni tendencia fuerte — esperar."
 
     # =========================
-    # ✅ 10) Confirmación de tendencia (para etiquetar ‘CONFIRMADA’)
+    # ✅ 10) Confirmación de tendencia
     # =========================
     confirm = (
-        (signal == "COMPRAR" and adx_val > 20 and ema20 > ema50) or
-        (signal == "VENTA"  and adx_val > 20 and ema20 < ema50)
+        (signal == "COMPRAR" and adx_val > 18 and ema20 > ema50) or
+        (signal == "VENTA"  and adx_val > 18 and ema20 < ema50)
     )
 
     # =========================
@@ -1555,6 +1568,7 @@ def get_thresholds_view():
     if not sym:
         return jsonify({"error": "symbol requerido"}), 400
     return jsonify({"symbol": sym, "thresholds": get_symbol_thresholds(sym)})
+
 @app.route("/api/ask", methods=["GET", "POST"])
 def api_ask():
     try:
@@ -1562,7 +1576,6 @@ def api_ask():
             data = request.get_json(force=True, silent=True) or {}
             symbol = (data.get("symbol") or "").upper().strip()
         else:
-            # ✅ Soporte para GET
             symbol = (request.args.get("symbol") or "").upper().strip()
 
         if not symbol:
@@ -1571,13 +1584,20 @@ def api_ask():
         balance = float(data.get("balance", DEFAULT_BALANCE)) if request.method == "POST" else DEFAULT_BALANCE
         use_kelly = bool(data.get("use_kelly", False)) if request.method == "POST" else False
 
-        # 🧠 Calcula la señal
+        # 🧠 1️⃣ Calcula la señal IA
         resp = compute_signal_for_symbol(symbol, balance=balance, use_kelly=use_kelly)
         print("DEBUG RESP INICIAL:", resp)
 
-        # 🆕 Descarga df si no existe
-        df = download_klines_safe(symbol, INTERVAL)
+        # 🧮 2️⃣ Calcula plan ATR (entrada, SL, TP)
+        if "signal" in resp and "price" in resp:
+            df = download_klines_safe(symbol, INTERVAL)
+            atr_val = 0.0
+            if not df.empty and "atr" in df.columns:
+                atr_val = float(df["atr"].iloc[-1])
+            plan = build_atr_plan(resp["signal"], resp["price"], atr_val)
+            resp.update(plan)
 
+        # 🧾 3️⃣ Genera narrativa con plan incluido
         if not df.empty:
             signal = resp.get("signal", "")
             prob_up = resp.get("prob_up", 0)
@@ -1592,20 +1612,18 @@ def api_ask():
                 "plan": resp.get("plan")
             }
 
-            # 🧠 ✅ Llamada corregida con nombres correctos
             narrative = market_context_narrative(
                 symbol,
                 df,
                 signal,
-                prob_up_pct=prob_up,         # 👈 nombres alineados con tu función
-                prob_down_pct=prob_down,     # 👈 nombres alineados con tu función
+                prob_up_pct=prob_up,
+                prob_down_pct=prob_down,
                 soporte=soporte,
                 resistencia=resistencia,
                 patron=patron,
                 trade_plan=trade_plan,
                 news=None
             )
-
             resp["narrative"] = narrative
             print("📝 Narrativa generada:", narrative)
 
@@ -1614,7 +1632,6 @@ def api_ask():
     except Exception as e:
         logging.exception("Error en /api/ask")
         return jsonify({"error": str(e)}), 500
-
 
 @app.get("/api/scanner")
 def api_scanner():
@@ -1625,28 +1642,41 @@ def api_scanner():
             result = compute_signal_for_symbol(sym)
             if result.get("error"):
                 continue
-            sig = result.get("signal", "")
-            if "COMPRA" in sig or "VENTA" in sig:
-                rr = result.get("risk_rr") or 0
-                oportunidades.append({
-                    "symbol": sym,
-                    "signal": sig,
-                    "prob_up": result.get("prob_up"),
-                    "prob_down": result.get("prob_down"),
-                    "price": result.get("price"),
-                    "entry_suggest": result.get("entry_suggest"),
-                    "SL": result.get("SL"),
-                    "TP": result.get("TP"),
-                    "risk_rr": rr,
-                    "plan": result.get("plan")
-                })
 
+            sig = result.get("signal", "")
+
+            # 🎯 Solo mostrar confirmadas
+            if "CONFIRMADA" not in sig:
+                continue
+
+            # 🧮 Cálculo del plan ATR (SL, TP, RR)
+            df = download_klines_safe(sym, INTERVAL)
+            if not df.empty and "atr" in df.columns:
+                atr_val = float(df["atr"].iloc[-1])
+                plan = build_atr_plan(sig, result["price"], atr_val)
+                result.update(plan)
+
+            rr = result.get("risk_rr") or 0
+            oportunidades.append({
+                "symbol": sym,
+                "signal": sig,
+                "prob_up": result.get("prob_up"),
+                "prob_down": result.get("prob_down"),
+                "price": result.get("price"),
+                "entry_suggest": result.get("entry_suggest"),
+                "SL": result.get("SL"),
+                "TP": result.get("TP"),
+                "risk_rr": rr,
+                "plan": result.get("plan")
+            })
+
+        # 🏁 Ordenar por mejor riesgo-beneficio
         oportunidades.sort(key=lambda x: x["risk_rr"] or 0, reverse=True)
         last_scan_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
         return jsonify({
-            "last_updated": last_scan_time,   # ⏳ Hora de la última actualización
-            "signals": oportunidades[:3]      # 👑 Top 3 señales
+            "last_updated": last_scan_time,
+            "signals": oportunidades     # 👈 todas las confirmadas, no solo top 3
         })
 
     except Exception as e:

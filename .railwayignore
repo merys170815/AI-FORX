@@ -13,6 +13,9 @@ __pycache__/
 *.pkl
 *.joblib
 *.json
+__pycache__/
+*.pyc
+
 
 # Ignorar datos de entrenamiento y resultados
 results_*/
