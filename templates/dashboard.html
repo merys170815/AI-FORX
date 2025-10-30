@@ -13,56 +13,34 @@
   }
   * { box-sizing: border-box; }
   body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; }
-  header { text-align: center; padding: 25px 10px; background: linear-gradient(90deg, #0d1117 0%, #161b22 100%); box-shadow: var(--shadow); }
+  header { text-align: center; padding: 25px 10px; background: linear-gradient(90deg, #0d1117 0%, #161b22 100%); box-shadow: var(--shadow); position: relative; }
   h1 { color: var(--primary); font-size: 2rem; margin: 0; }
   .subtitle { color: var(--muted); margin-top: 5px; }
+  .countdown { color: var(--yellow); font-weight: bold; margin-top: 8px; font-size: 15px; }
   .search { display: flex; justify-content: center; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
   #symbol-input { padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #2f3136; background: var(--card); color: var(--text); width: 260px; }
   button { padding: 12px 18px; font-size: 16px; cursor: pointer; background: var(--primary); color: #fff; border: none; border-radius: 8px; transition: transform 0.15s ease; }
   button:hover { transform: scale(1.05); }
 
-  #respuesta-consulta { display: none; max-width: 720px; background: var(--card); margin: 25px auto; padding: 25px; border-radius: 12px; box-shadow: var(--shadow); transition: background 0.4s ease; }
+  #respuesta-consulta { display: none; max-width: 720px; background: var(--card); margin: 25px auto; padding: 25px; border-radius: 12px; box-shadow: var(--shadow); }
   .alert-buy { border-left: 5px solid var(--green); background: #112f22; }
   .alert-sell { border-left: 5px solid var(--red); background: #331414; }
   .alert-news { border-left: 5px solid var(--yellow); background: #2f2f15; }
   .alert-strat { border-left: 5px solid var(--primary); background: #1d2634; }
 
   #scanner-result { margin-top: 15px; }
-  .scanner-card { margin-bottom: 15px; padding: 15px; background: #1d2634; border-radius: 8px; transition: transform 0.2s ease; }
+  .scanner-card { margin-bottom: 25px; padding: 20px; background: #1d2634; border-radius: 10px; transition: transform 0.2s ease; box-shadow: var(--shadow); }
   .scanner-card:hover { transform: scale(1.02); }
+  .inactive { opacity: 0.85; background: #2a2f3d; }
 
   .rr-high { color: var(--green); font-weight: bold; }
   .rr-medium { color: var(--yellow); font-weight: bold; }
   .rr-low { color: var(--red); font-weight: bold; }
 
-  .chart-container { margin-top: 20px; position: relative; height: 300px; }
-
-  /* 📝 Bloque narrativa */
-  .narrative-block {
-    margin-top: 15px;
-    padding: 15px;
-    background: #202733;
-    border-left: 5px solid var(--primary);
-    border-radius: 8px;
-    box-shadow: 0 0 10px rgba(0,0,0,0.3);
-  }
-  .narrative-block h3 {
-    color: var(--primary);
-    margin: 0 0 10px 0;
-    font-size: 18px;
-  }
-  .narrative-block p {
-    color: var(--text);
-    font-size: 15px;
-    line-height: 1.5;
-    white-space: pre-wrap;
-  }
-  .narrative-block ul {
-    margin-top: 10px;
-    padding-left: 20px;
-    color: var(--muted);
-    font-size: 14px;
-  }
+  .narrative-block { margin-top: 15px; padding: 15px; background: #202733; border-left: 5px solid var(--primary); border-radius: 8px; }
+  .narrative-block h3 { color: var(--primary); margin: 0 0 10px 0; font-size: 18px; }
+  .narrative-block p { color: var(--text); font-size: 15px; line-height: 1.5; white-space: pre-wrap; }
+  .narrative-block ul { margin-top: 10px; padding-left: 20px; color: var(--muted); font-size: 14px; }
 
   footer { text-align: center; color: var(--muted); padding: 30px 0; font-size: 14px; border-top: 1px solid #222; margin-top: 50px; }
 </style>
@@ -74,6 +52,7 @@
   <header>
     <h1>🚀 Trading IA Pro Dashboard</h1>
     <p class="subtitle">IA + Estrategia Híbrida + Explicabilidad + TP/SL + Paper Trading</p>
+    <p id="countdown" class="countdown">🕒 Calculando próxima vela...</p>
     <div class="search">
       <input id="symbol-input" type="text" placeholder="Ej: BTCUSDT" />
       <button onclick="consultarSimbolo()">Analizar</button>
@@ -81,219 +60,148 @@
     </div>
   </header>
 
-  <!-- 📊 Paper Trading Stats -->
   <div id="paper-stats" style="text-align:center;margin-top:15px;color:#58a6ff;font-size:16px;">
     💰 Balance: $0 | 📊 Trades: 0 | 🏆 Winrate: 0%
   </div>
 
   <main>
     <section id="respuesta-consulta"></section>
-
-    <div class="chart-container" style="display:none;">
-      <canvas id="tradeChart"></canvas>
-    </div>
-
     <section style="max-width:800px;margin:40px auto;padding:20px;background:#161b22;border-radius:10px;box-shadow:var(--shadow);">
-      <h2>📊 Top 3 Oportunidades</h2>
-      <p style="color:var(--muted);font-size:14px;margin-top:5px;">🔁 Se actualiza al cierre de cada vela de 1 hora.</p>
+      <h2>📊 Señales Actuales (6 símbolos)</h2>
+      <p style="color:var(--muted);font-size:14px;margin-top:5px;">🔁 Actualizado automáticamente.</p>
       <p id="last-update" style="color: var(--muted); font-size: 14px; margin-top: 10px;"></p>
       <div id="scanner-result"></div>
-    </section>
-
-    <section id="stats-section" style="max-width:800px;margin:40px auto;padding:20px;background:#161b22;border-radius:10px;box-shadow:var(--shadow);">
-      <h2>📈 Estadísticas Globales</h2>
-      <p style="color:var(--muted);font-size:14px;margin-top:5px;">🔸 Datos actualizados automáticamente cada 24 horas.</p>
-      <div id="stats-content">⏳ Cargando estadísticas...</div>
-      <div class="chart-container" style="margin-top:20px;">
-        <canvas id="statsChart"></canvas>
-      </div>
     </section>
   </main>
 
   <footer>© 2025 Trading IA Pro — Inteligencia + Estrategia 📈</footer>
 
 <script>
-let ultimoTop3 = null;
-let chart = null;
-let statsChart = null;
-
-function fmt(n) { return Number(n).toLocaleString(undefined, { maximumFractionDigits: 6 }); }
-function escapeHTML(str) {
-  return String(str).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
-}
+function fmt(n){return Number(n).toLocaleString(undefined,{maximumFractionDigits:6});}
+function escapeHTML(str){return String(str).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");}
 
 // ==================== 🔎 Scanner ====================
-async function cargarScanner() {
-  const box = document.getElementById("scanner-result");
-  box.innerHTML = "⏳ Escaneando mercado...";
-  try {
-    const res = await fetch("/api/scanner");
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
+async function cargarScanner(){
+  const box=document.getElementById("scanner-result");
+  box.innerHTML="⏳ Escaneando mercado...";
+  try{
+    const res=await fetch("/api/scanner");
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||res.statusText);
 
-    if (!Array.isArray(data) || data.length === 0) {
-      box.innerHTML = "⚠️ No hay oportunidades activas ahora.";
-      ultimoTop3 = null;
-      return;
+    const activos=data.activos||[];
+    const inactivos=data.inactivos||data.excluidos||[];
+    let html="";
+
+    html+=`<h3 style="color:var(--green)">🟢 Activos con mejor desempeño (${activos.length})</h3>`;
+    if(activos.length===0){
+      html+="<p>⚠️ No hay símbolos activos actualmente.</p>";
+    }else{
+      activos.forEach((op,i)=>{
+        const rrClass=op.risk_rr>=2?"rr-high":op.risk_rr>=1?"rr-medium":"rr-low";
+        const color=op.signal.includes("VENTA")?"var(--red)":op.signal.includes("COMPRA")?"var(--green)":"var(--yellow)";
+        html+=generarCardHTML(op,color,rrClass,i+1);
+      });
     }
 
-    let html = "";
-    data.forEach((op, i) => {
-      const rrClass = op.risk_rr >= 2 ? "rr-high" : op.risk_rr >= 1 ? "rr-medium" : "rr-low";
-      const color = op.signal.includes('VENTA') ? 'var(--red)' : 'var(--green)';
-      html += `
-        <div class="scanner-card" style="border-left:5px solid ${color};">
-          <h3>${i+1}️⃣ ${op.symbol}</h3>
-          <p><strong>${op.signal}</strong></p>
-          <p>📈 Prob ↑: ${op.prob_up}% | 📉 Prob ↓: ${op.prob_down}%</p>
-          <p>💰 Entrada: ${fmt(op.entry_suggest)} | 🛑 SL: ${fmt(op.SL)} | 🏁 TP: ${fmt(op.TP)}</p>
-          <p>⚖️ <span class="${rrClass}">${op.risk_rr}</span> R:R | 🧭 ${op.plan}</p>
-        </div>`;
-    });
-    box.innerHTML = html;
-    document.getElementById("last-update").innerText = "⏰ " + new Date().toLocaleTimeString();
-  } catch (err) {
-    box.innerHTML = "❌ Error al escanear: " + escapeHTML(err.message);
+    if(inactivos.length>0){
+      html+=`<h3 style="color:var(--yellow);margin-top:40px;">🟡 Símbolos con baja efectividad (${inactivos.length})</h3>`;
+      inactivos.forEach((op,i)=>{
+        const rrClass=op.risk_rr>=2?"rr-high":op.risk_rr>=1?"rr-medium":"rr-low";
+        html+=generarCardHTML(op,"var(--yellow)",rrClass,i+1,true);
+      });
+    }
+
+    box.innerHTML=html;
+    document.getElementById("last-update").innerText="⏰ "+new Date().toLocaleTimeString();
+  }catch(err){
+    box.innerHTML="❌ Error al escanear: "+escapeHTML(err.message);
   }
 }
 
-// ==================== 📊 Estadísticas ====================
-async function cargarStats() {
-  const box = document.getElementById("stats-content");
-  box.innerHTML = "⏳ Cargando estadísticas...";
-  try {
-    const res = await fetch("/api/stats");
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
+// 🔧 Tarjeta HTML
+function generarCardHTML(op,color,rrClass,index,esInactivo=false){
+  return `
+  <div class="scanner-card ${esInactivo?'inactive':''}" style="border-left:5px solid ${color};">
+    <h3>${index}️⃣ ${op.symbol}</h3>
+    <p><strong>${op.signal}</strong></p>
+    <p>📈 Prob ↑: ${op.prob_up}% | 📉 Prob ↓: ${op.prob_down}%</p>
+    <p>💰 Precio actual: ${fmt(op.price)}</p>
+    ${op.entry_suggest?`<p>🎯 Entrada: ${fmt(op.entry_suggest)}</p>`:""}
+    ${op.SL?`<p>🛑 SL: ${fmt(op.SL)}</p>`:""}
+    ${op.TP?`<p>🏁 TP: ${fmt(op.TP)}</p>`:""}
+    ${op.risk_rr?`<p>⚖️ <span class="${rrClass}">${op.risk_rr}</span> R:R</p>`:""}
+    ${op.plan?`<p>🧭 Plan: ${op.plan}</p>`:""}
+    <div class="narrative-block">
+      <h3>📝 Explicación</h3>
+      <p>${escapeHTML(op.narrative||"Sin explicación generada por IA.")}</p>
+      <ul>
+        ${op.candle_pattern?`<li>🕯 Patrón: <b>${escapeHTML(op.candle_pattern)}</b></li>`:""}
+        ${op.support?`<li>📉 Soporte: <b>${fmt(op.support)}</b></li>`:""}
+        ${op.resistance?`<li>📈 Resistencia: <b>${fmt(op.resistance)}</b></li>`:""}
+      </ul>
+    </div>
+  </div>`;
+}
 
-    let html = `
-      <p>📊 <strong>Trades Totales:</strong> ${data.total_trades}</p>
-      <p>✅ Ganadoras: ${data.wins} | ❌ Perdedoras: ${data.losses}</p>
-      <p>🏆 Winrate: <strong>${data.winrate}%</strong></p>
-      <p>⚖️ R:R Promedio: <strong>${data.avg_rr}</strong></p>
-      <p>📉 Máx Drawdown: <strong>${data.max_drawdown}</strong></p>
-    `;
-    box.innerHTML = html;
-    renderStatsChart(data);
-  } catch (err) {
-    box.innerHTML = "❌ Error cargando estadísticas: " + escapeHTML(err.message);
+// ==================== 📢 Paper Trading ====================
+async function cargarPaperStats(){
+  try{
+    const res=await fetch("/api/paper_stats");
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||res.statusText);
+    document.getElementById("paper-stats").innerHTML=`💰 Balance: $${data.balance} | 📊 Trades: ${data.total_trades} | ✅ ${data.wins} / ❌ ${data.losses} | 🏆 Winrate: ${data.winrate}%`;
+  }catch(err){
+    document.getElementById("paper-stats").innerText="❌ Error cargando paper trading";
   }
 }
 
-function renderStatsChart(data) {
-  const ctx = document.getElementById("statsChart").getContext("2d");
-  const labels = ["Ganadoras", "Perdedoras"];
-  const values = [data.wins, data.losses];
-  const colors = ["#00ff88", "#ff4d4d"];
-  if (statsChart) statsChart.destroy();
-  statsChart = new Chart(ctx, {
-    type: 'doughnut',
-    data: { labels, datasets: [{ data: values, backgroundColor: colors }] },
-    options: { plugins: { legend: { labels: { color: '#e6edf3' } } }, responsive: true }
+// ==================== 🔁 Sincronización y cuenta regresiva ====================
+function sincronizarScannerConVelas(){
+  const ahora=new Date();
+  const min=ahora.getUTCMinutes();
+  const seg=ahora.getUTCSeconds();
+  const msHastaCierre=((59-min)*60+(60-seg))*1000;
+
+  actualizarCuentaRegresiva(msHastaCierre/1000);
+  setTimeout(()=>{
+    mostrarBannerNuevaVela();
+    document.getElementById("alert-sound").play();
+    cargarScanner();
+    sincronizarScannerConVelas();
+  },msHastaCierre);
+}
+
+// 🕒 Actualiza el contador cada segundo
+function actualizarCuentaRegresiva(segundosRestantes){
+  const countdownEl=document.getElementById("countdown");
+  const intervalo=setInterval(()=>{
+    if(segundosRestantes<=0){clearInterval(intervalo);countdownEl.innerText="🕒 Nueva vela inminente...";return;}
+    const min=Math.floor(segundosRestantes/60);
+    const seg=Math.floor(segundosRestantes%60);
+    countdownEl.innerText=`🕒 Próxima vela en ${min}m ${seg}s`;
+    segundosRestantes--;
+  },1000);
+}
+
+// 🟦 Banner de nueva vela
+function mostrarBannerNuevaVela(){
+  const banner=document.createElement("div");
+  banner.innerText="📊 Nueva vela detectada — Escaneando mercado...";
+  Object.assign(banner.style,{
+    position:"fixed",top:"0",left:"0",right:"0",padding:"10px",
+    background:"#58a6ff",color:"#fff",textAlign:"center",fontWeight:"bold",zIndex:"9999"
   });
+  document.body.appendChild(banner);
+  setTimeout(()=>banner.remove(),4000);
 }
 
-// ==================== 🧠 Señales individuales ====================
-async function consultarSimbolo() {
-  const symbol = document.getElementById("symbol-input").value.trim().toUpperCase();
-  const box = document.getElementById("respuesta-consulta");
-  box.style.display = "block";
-  box.className = "alert-strat";
-  box.innerHTML = "⏳ Analizando " + (symbol || "—") + "...";
-
-  if (!symbol) { box.innerHTML = "⚠️ Ingresa un símbolo válido."; return; }
-
-  try {
-    const res = await fetch("/api/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
-
-    if (data.signal?.includes("COMPRA")) { box.className = "alert-buy"; document.body.style.background = "#002b14"; }
-    else if (data.signal?.includes("VENTA")) { box.className = "alert-sell"; document.body.style.background = "#300000"; }
-    else { box.className = "alert-news"; document.body.style.background = "#2f2f15"; }
-
-    let html = `
-      <h2>${data.symbol}</h2>
-      <p>📈 Señal: <strong>${data.signal}</strong></p>
-      <p>🔼 Prob ↑: ${data.prob_up}% | 🔽 Prob ↓: ${data.prob_down}%</p>
-      <p>💰 Precio actual: ${fmt(data.price)}</p>
-    `;
-
-    if (data.entry_suggest) html += `<p>🎯 Entrada: ${fmt(data.entry_suggest)}</p>`;
-    if (data.SL) html += `<p>🛑 Stop Loss: ${fmt(data.SL)}</p>`;
-    if (data.TP) html += `<p>🏁 Take Profit: ${fmt(data.TP)}</p>`;
-    if (data.technical_message) html += `<p>📢 ${escapeHTML(data.technical_message)}</p>`;
-
-    if (data.risk_rr) {
-      const rrClass = data.risk_rr >= 2 ? "rr-high" : data.risk_rr >= 1 ? "rr-medium" : "rr-low";
-      html += `<p>⚖️ R:R: <span class="${rrClass}">${data.risk_rr}</span></p>`;
-    }
-
-    if (data.plan) html += `<p>🧭 Plan de Trade: ${data.plan}</p>`;
-
-    // 📝 Narrativa explicativa
-    if (data.narrative || data.support || data.resistance || data.candle_pattern) {
-      html += `
-        <div class="narrative-block">
-          <h3>📝 Explicación de la señal</h3>
-          <p>${escapeHTML(data.narrative || "Sin explicación generada por IA.")}</p>
-          <ul>
-            ${data.candle_pattern ? `<li>🕯 Patrón detectado: <b>${escapeHTML(data.candle_pattern)}</b></li>` : ""}
-            ${data.support ? `<li>📉 Soporte cercano: <b>${fmt(data.support)}</b></li>` : ""}
-            ${data.resistance ? `<li>📈 Resistencia cercana: <b>${fmt(data.resistance)}</b></li>` : ""}
-          </ul>
-        </div>
-      `;
-    }
-
-    box.innerHTML = html;
-    renderChart(data);
-  } catch (err) {
-    box.className = "alert-news";
-    box.innerHTML = `❌ Error: ${escapeHTML(err.message)}`;
-  }
-}
-
-// ==================== 📢 Paper Trading Stats ====================
-async function cargarPaperStats() {
-  try {
-    const res = await fetch("/api/paper_stats");
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
-    document.getElementById("paper-stats").innerHTML = `
-      💰 Balance: $${data.balance} | 📊 Trades: ${data.total_trades} | ✅ ${data.wins} / ❌ ${data.losses} | 🏆 Winrate: ${data.winrate}%
-    `;
-  } catch (err) {
-    document.getElementById("paper-stats").innerText = "❌ Error cargando paper trading";
-  }
-}
-
-function renderChart(data) {
-  const container = document.querySelector(".chart-container");
-  container.style.display = (data.entry_suggest && data.SL && data.TP) ? "block" : "none";
-  if (container.style.display !== "block") return;
-  const ctx = document.getElementById("tradeChart").getContext("2d");
-  const labels = ["SL", "Entrada", "TP"];
-  const values = [data.SL, data.entry_suggest, data.TP];
-  const colors = ["#ff4d4d", "#58a6ff", "#00ff88"];
-  if (chart) chart.destroy();
-  chart = new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets: [{ label: `Niveles de precio (${data.symbol})`, data: values, backgroundColor: colors }] },
-    options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${fmt(c.raw)}` } } }, scales: { y: { beginAtZero: false } } }
-  });
-}
-
-window.addEventListener("load", () => {
+// ==================== 🧭 Inicio ====================
+window.addEventListener("load",()=>{
   cargarScanner();
-  cargarStats();
   cargarPaperStats();
-  setInterval(cargarPaperStats, 5000);
-  if (Notification.permission !== "granted") Notification.requestPermission();
+  setInterval(cargarPaperStats,5000);
+  sincronizarScannerConVelas();
 });
 </script>
 </body>

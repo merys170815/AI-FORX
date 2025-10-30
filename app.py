@@ -38,6 +38,11 @@ paper_trades = []         # Historial de operaciones simuladas
 paper_winrate = 0.0
 
 
+# =========================
+# 🧠 Memoria global de señales
+# =========================
+last_signals_memory = {}
+
 # ---------------- CONFIG GLOBAL ----------------
 API_KEY = os.getenv("API_KEY") or "TU_API_KEY_REAL"
 API_SECRET = os.getenv("API_SECRET") or "TU_API_SECRET_REAL"
@@ -1122,6 +1127,7 @@ def get_class_index(classes, value):
     if alt_val in classes:
         return classes.index(alt_val)
     raise ValueError(f"Clase {value} no encontrada en modelo (clases={classes})")
+
 def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use_kelly: bool = False) -> Dict[str, Any]:
     # =========================
     # 📥 1) Datos
@@ -1149,7 +1155,7 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     news = hay_noticia_importante_proxima()
     has_news = bool(news)
 
-    # 🧠 4) Umbrales dinámicos (en función de ADX/volatilidad/noticias)
+    # 🧠 4) Umbrales dinámicos
     th = get_dynamic_thresholds(adx_val, atr_ratio, has_news)
 
     # =========================
@@ -1167,7 +1173,7 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
         lateral = True; lateral_reasons.append(f"ATR muy bajo ({atr_ratio:.4f})")
 
     # =========================
-    # 🤖 6) Predicción IA (modelo)
+    # 🤖 6) Predicción IA
     # =========================
     X_all    = df_feat.reindex(columns=feature_cols).astype(float)
     preds    = model.predict_proba(X_all.values)
@@ -1179,7 +1185,7 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
     prob_down = float(preds[-1, idx_down])
 
     # =========================
-    # 🧭 7) Señal IA base (por probabilidad)
+    # 🧭 7) Señal IA base
     # =========================
     signal = "ESPERAR"
     if prob_up > th["UP"] and (prob_up - prob_down) >= th["DIFF"]:
@@ -1210,23 +1216,18 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
         dist_support    = abs(price_now - soporte) if soporte is not None else float("inf")
         dist_resistance = abs(price_now - resistencia) if resistencia is not None else float("inf")
 
-        # Rupturas
         if signal == "COMPRAR" and resistencia is not None and price_now > resistencia + 0.3 * atr_margin:
             tech_message = f"🚀 Ruptura de resistencia ({resistencia:.2f}) → compra válida."
             valid_signal = True
         elif signal == "VENTA" and soporte is not None and price_now < soporte - 0.3 * atr_margin:
             tech_message = f"📉 Ruptura de soporte ({soporte:.2f}) → venta válida."
             valid_signal = True
-
-        # Rebotess
         elif signal == "COMPRAR" and soporte is not None and dist_support <= atr_margin:
             tech_message = f"🟢 Rebote en soporte ({soporte:.2f}) → compra válida."
             valid_signal = True
         elif signal == "VENTA" and resistencia is not None and dist_resistance <= atr_margin:
             tech_message = f"🔴 Rebote en resistencia ({resistencia:.2f}) → venta válida."
             valid_signal = True
-
-        # Continuación de tendencia
         elif adx_val > 25 and (
             (signal == "COMPRAR" and ema20 > ema50) or
             (signal == "VENTA" and ema20 < ema50)
@@ -1234,13 +1235,12 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
             tech_message = "📈 Tendencia fuerte → continuación válida aunque esté lejos de S/R."
             valid_signal = True
 
-        # Si nada valida
         if not valid_signal:
             signal = "ESPERAR"
             tech_message = "🧭 Sin ruptura/rebote ni tendencia fuerte — esperar."
 
     # =========================
-    # ✅ 10) Confirmación de tendencia
+    # ✅ 10) Confirmación
     # =========================
     confirm = (
         (signal == "COMPRAR" and adx_val > 18 and ema20 > ema50) or
@@ -1279,6 +1279,56 @@ def compute_signal_for_symbol(symbol: str, balance: float = DEFAULT_BALANCE, use
         "VENTA POTENCIAL ⚠️"
     )
 
+    # =========================
+    # 🧠 13) Memoria de señales previas
+    # =========================
+    global last_signals_memory
+    prev_info = last_signals_memory.get(symbol, {})
+    prev_signal = prev_info.get("signal")
+
+    # --- Ajuste de continuidad / salida de posición ---
+    if prev_signal in ("COMPRA CONFIRMADA ✅", "MANTENER COMPRA 🟢") and "COMPRA" not in signal_out:
+        if adx_val < 15 or ema20 < ema50:
+            signal_out = "SALIR DE COMPRA ⚠️"
+        else:
+            signal_out = "MANTENER COMPRA 🟢"
+
+    elif prev_signal in ("VENTA CONFIRMADA ✅", "MANTENER VENTA 🔴") and "VENTA" not in signal_out:
+        if adx_val < 15 or ema20 > ema50:
+            signal_out = "SALIR DE VENTA ⚠️"
+        else:
+            signal_out = "MANTENER VENTA 🔴"
+
+    # --- Guardar estado actual ---
+    last_signals_memory[symbol] = {
+        "signal": signal_out,
+        "timestamp": datetime.utcnow(),
+        "price": price_now
+    }
+
+    # =========================
+    # 📧 14) Envío de alerta por correo (solo cambios reales)
+    # =========================
+    try:
+        from alerts import enviar_alerta_email
+
+        if signal_out != prev_signal and not signal_out.startswith("ESPERAR"):
+            asunto = f"📈 Nueva señal {symbol}: {signal_out}"
+            cuerpo = (
+                f"Símbolo: {symbol}\n"
+                f"Señal: {signal_out}\n"
+                f"Precio actual: {price_now:.2f}\n"
+                f"Prob ↑: {prob_up * 100:.2f}% | Prob ↓: {prob_down * 100:.2f}%\n"
+                f"Fecha UTC: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            )
+            enviar_alerta_email(asunto, cuerpo)
+            print(f"📩 Alerta enviada para {symbol}: {signal_out}")
+    except Exception as e:
+        print(f"⚠️ No se pudo enviar correo: {e}")
+
+    # =========================
+    # ✅ 15) Retorno final
+    # =========================
     return {
         "symbol": symbol,
         "signal": signal_out,
@@ -1637,46 +1687,83 @@ def api_ask():
 def api_scanner():
     global last_scan_time
     try:
-        oportunidades = []
-        for sym in SYMBOLS:
+        resultados_activos = []
+        resultados_excluidos = []
+
+        # 📊 Determinar activos vs excluidos según filtros
+        try:
+            df_all = pd.read_csv(OPTIM_FILE)
+            activos = get_symbols_with_filters()
+            todos = df_all["symbol"].astype(str).str.upper().unique().tolist()
+            excluidos = [s for s in todos if s not in activos]
+        except Exception:
+            activos = SYMBOLS
+            excluidos = [s for s in SYMBOLS if s not in activos]
+
+        def procesar_simbolo(sym, etiqueta_baja_efectividad=False):
+            """Analiza un símbolo y genera narrativa y plan si aplica"""
             result = compute_signal_for_symbol(sym)
             if result.get("error"):
-                continue
+                return None
 
-            sig = result.get("signal", "")
+            signal_text = result.get("signal", "").upper()
 
-            # 🎯 Solo mostrar confirmadas
-            if "CONFIRMADA" not in sig:
-                continue
+            # Etiqueta si es inactivo
+            if etiqueta_baja_efectividad:
+                result["signal"] = f"{result.get('signal', 'SIN SEÑAL')} (Baja efectividad)"
 
-            # 🧮 Cálculo del plan ATR (SL, TP, RR)
+            # 📈 Solo generar SL/TP si hay COMPRA o VENTA
+            if "COMPRA" in signal_text or "VENTA" in signal_text:
+                df = download_klines_safe(sym, INTERVAL)
+                if not df.empty and "atr" in df.columns:
+                    atr_val = float(df["atr"].iloc[-1])
+                    plan = build_atr_plan(result["signal"], result["price"], atr_val)
+                    result.update(plan)
+
+            # 🧾 Narrativa (solo si hay datos)
             df = download_klines_safe(sym, INTERVAL)
-            if not df.empty and "atr" in df.columns:
-                atr_val = float(df["atr"].iloc[-1])
-                plan = build_atr_plan(sig, result["price"], atr_val)
-                result.update(plan)
+            if not df.empty:
+                soporte = result.get("support")
+                resistencia = result.get("resistance")
+                patron = result.get("candle_pattern")
+                trade_plan = {
+                    "entry_suggest": result.get("entry_suggest"),
+                    "SL": result.get("SL"),
+                    "TP": result.get("TP"),
+                    "plan": result.get("plan")
+                }
+                result["narrative"] = market_context_narrative(
+                    sym, df, result.get("signal", ""),
+                    prob_up_pct=result.get("prob_up", 0),
+                    prob_down_pct=result.get("prob_down", 0),
+                    soporte=soporte, resistencia=resistencia,
+                    patron=patron, trade_plan=trade_plan, news=None
+                )
 
-            rr = result.get("risk_rr") or 0
-            oportunidades.append({
-                "symbol": sym,
-                "signal": sig,
-                "prob_up": result.get("prob_up"),
-                "prob_down": result.get("prob_down"),
-                "price": result.get("price"),
-                "entry_suggest": result.get("entry_suggest"),
-                "SL": result.get("SL"),
-                "TP": result.get("TP"),
-                "risk_rr": rr,
-                "plan": result.get("plan")
-            })
+            return result
 
-        # 🏁 Ordenar por mejor riesgo-beneficio
-        oportunidades.sort(key=lambda x: x["risk_rr"] or 0, reverse=True)
+        # 🟢 Analizar símbolos activos
+        for sym in activos:
+            res = procesar_simbolo(sym)
+            if res:
+                resultados_activos.append(res)
+
+        # 🟡 Analizar símbolos inactivos
+        for sym in excluidos:
+            res = procesar_simbolo(sym, etiqueta_baja_efectividad=True)
+            if res:
+                resultados_excluidos.append(res)
+
+        # 🏁 Ordenar por R:R
+        resultados_activos.sort(key=lambda x: x.get("risk_rr", 0) or 0, reverse=True)
+        resultados_excluidos.sort(key=lambda x: x.get("risk_rr", 0) or 0, reverse=True)
+
         last_scan_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
         return jsonify({
             "last_updated": last_scan_time,
-            "signals": oportunidades     # 👈 todas las confirmadas, no solo top 3
+            "activos": resultados_activos,
+            "excluidos": resultados_excluidos
         })
 
     except Exception as e:
